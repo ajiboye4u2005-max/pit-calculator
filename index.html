@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nigeria PIT Calculator - Personal Income Tax Calculator</title>
+    <meta name="description" content="Free Nigeria Personal Income Tax (PIT) Calculator. Calculate your tax based on statutory deductions and progressive tax bands.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #f0fdf4 0%, #d1fae5 100%);
+        }
+        .tab-active {
+            border-bottom: 3px solid #059669; /* green-600 */
+            color: #047857; /* emerald-700 */
+            font-weight: 600;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+</head>
+<body class="gradient-bg min-h-screen">
+    <div id="app" class="p-4">
+        </div>
+
+    <script>
+        // --- CONSTANTS ---
+        const RENT_RELIEF_CAP = 500000;
+        const RENT_RELIEF_RATE = 0.20;
+        const PIT_BRACKETS = [
+            { limit: 800000, rate: 0.00, name: "First ₦800,000" },
+            { limit: 2200000, rate: 0.15, name: "Next ₦2,200,000" },
+            { limit: 9000000, rate: 0.18, name: "Next ₦9,000,000" },
+            { limit: 13000000, rate: 0.21, name: "Next ₦13,000,000" },
+            { limit: 25000000, rate: 0.23, name: "Next ₦25,000,000" }
+        ];
+        const TAX_RATE_HIGHEST = 0.25;
+
+        // The keys required for the calculation logic
+        const FINANCIAL_KEYS = ['grossIncome', 'nhf', 'nhis', 'pension', 'loanInterest', 'lifeInsurance', 'annualRent'];
+
+        // Headers for the template and output (including new HR fields)
+        const TEMPLATE_HEADERS = [
+            "Name of Staff",
+            "Staff ID",
+            "Grade of Staff",
+            "Gross Annual Income",
+            "NHF Contribution",
+            "NHIS Contribution",
+            "Pension Contribution",
+            "Loan Interest",
+            "Life Insurance Premium",
+            "Annual Rent Paid"
+        ];
+        
+        // Mapping from Header (key in uploaded file) to internal JS key
+        const BULK_HEADER_MAP = {
+            'Name of Staff': 'staffName',
+            'Staff ID': 'staffId',
+            'Grade of Staff': 'staffGrade',
+            'Gross Annual Income': 'grossIncome',
+            'NHF Contribution': 'nhf',
+            'NHIS Contribution': 'nhis',
+            'Pension Contribution': 'pension',
+            'Loan Interest': 'loanInterest',
+            'Life Insurance Premium': 'lifeInsurance',
+            'Annual Rent Paid': 'annualRent'
+        };
+
+        const steps = [
+            { key: 'grossIncome', label: 'Gross Annual Income', placeholder: 'e.g., 5000000', hint: 'Enter your total annual gross income in Naira' },
+            { key: 'nhf', label: 'NHF Contribution (National Housing Fund)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
+            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
+            { key: 'pension', label: 'Pension Contribution', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
+            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
+            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
+            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For rent relief calculation' }
+        ];
+
+        // --- STATE ---
+        let currentTab = 'individual';
+        let currentStep = 0;
+        let formData = {};
+        let result = null;
+        let bulkResult = null;
+
+        // --- UTILITY FUNCTIONS ---
+        function formatCurrency(num) {
+            return new Intl.NumberFormat('en-NG', {
+                style: 'currency',
+                currency: 'NGN',
+                minimumFractionDigits: 2
+            }).format(num);
+        }
+
+        /**
+         * Generates and downloads an Excel template with the required column headers.
+         */
+        function generateAndDownloadTemplate() {
+            const sheetData = [
+                TEMPLATE_HEADERS,
+                // Add a sample row for user guidance (HR fields are text, finance fields are 0)
+                ["John Doe", "A1001", "Senior", 0, 0, 0, 0, 0, 0, 0]
+            ];
+            
+            const ws = XLSX.utils.aoa_to_sheet(sheetData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "PIT Template");
+            XLSX.writeFile(wb, "PIT_Input_Template.xlsx");
+        }
+
+
+        // --- CORE CALCULATION LOGIC (Reused for both individual and bulk) ---
+        function calculatePITForEmployee(data) {
+            // New HR fields are passed through without modification
+            const staffName = data.staffName || '';
+            const staffId = data.staffId || '';
+            const staffGrade = data.staffGrade || '';
+            
+            // Financial fields are parsed as numbers
+            const grossIncome = parseFloat(data.grossIncome) || 0;
+            const nhf = parseFloat(data.nhf) || 0;
+            const nhis = parseFloat(data.nhis) || 0;
+            const pension = parseFloat(data.pension) || 0;
+            const loanInterest = parseFloat(data.loanInterest) || 0;
+            const lifeInsurance = parseFloat(data.lifeInsurance) || 0;
+            const annualRent = parseFloat(data.annualRent) || 0;
+
+            const statutoryDeductions = nhf + nhis + pension + loanInterest + lifeInsurance;
+            const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
+            const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
+            const totalDeductions = statutoryDeductions + rentRelief;
+            const taxableIncome = Math.max(0, grossIncome - totalDeductions);
+
+            let remainingTaxable = taxableIncome;
+            let taxPayable = 0;
+            const bandDetails = [];
+
+            // Progressive Tax Calculation (omitted for brevity, assume correct from previous version)
+            for (const bracket of PIT_BRACKETS) {
+                if (remainingTaxable <= 0) break;
+                const taxedAmount = Math.min(remainingTaxable, bracket.limit);
+                const taxInBand = taxedAmount * bracket.rate;
+                taxPayable += taxInBand;
+                remainingTaxable -= taxedAmount;
+
+                if (taxedAmount > 0) {
+                    bandDetails.push({
+                        name: bracket.name,
+                        rate: bracket.rate,
+                        taxedAmount,
+                        taxInBand
+                    });
+                }
+            }
+
+            if (remainingTaxable > 0) {
+                const taxInBand = remainingTaxable * TAX_RATE_HIGHEST;
+                taxPayable += taxInBand;
+                bandDetails.push({
+                    name: "Above ₦50,000,000",
+                    rate: TAX_RATE_HIGHEST,
+                    taxedAmount: remainingTaxable,
+                    taxInBand
+                });
+            }
+
+            return {
+                staffName, // Included new HR fields
+                staffId,
+                staffGrade,
+                grossIncome,
+                nhf,
+                nhis,
+                pension,
+                loanInterest,
+                lifeInsurance,
+                annualRent,
+                statutoryDeductions,
+                rentRelief,
+                totalDeductions,
+                taxableIncome,
+                taxPayable,
+                bandDetails
+            };
+        }
+
+        // --- INDIVIDUAL CALCULATION LOGIC (Simplified) ---
+        function calculatePIT() {
+            // Note: Individual calculation doesn't use the HR fields, so we only pass the financial data
+            result = calculatePITForEmployee(formData);
+            render();
+        }
+
+        function handleNext() {
+            const input = document.getElementById('currentInput');
+            const valueStr = input.value.replace(/,/g, '');
+            const value = parseFloat(valueStr || '0');
+
+            if (isNaN(value) || value < 0) {
+                alert('Please enter a valid positive number');
+                return;
+            }
+
+            if (currentStep === 0 && value === 0 && input.value !== '0') {
+                 alert('Please enter your Gross Annual Income.');
+                return;
+            }
+
+            formData[steps[currentStep].key] = value;
+
+            if (currentStep < steps.length - 1) {
+                currentStep++;
+                render();
+                setTimeout(() => {
+                    const nextInput = document.getElementById('currentInput');
+                    if (nextInput) nextInput.focus();
+                }, 100);
+            } else {
+                calculatePIT();
+            }
+        }
+
+        function handleBack() {
+            if (currentStep > 0) {
+                currentStep--;
+                render();
+                setTimeout(() => {
+                    const prevInput = document.getElementById('currentInput');
+                    if (prevInput) prevInput.focus();
+                }, 100);
+            }
+        }
+
+        function resetCalculator() {
+            currentStep = 0;
+            formData = {};
+            result = null;
+            render();
+            setTimeout(() => {
+                const input = document.getElementById('currentInput');
+                if (input) input.focus();
+            }, 100);
+        }
+
+        // --- BULK UPLOAD LOGIC ---
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const acceptedTypes = ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'text/csv'];
+            if (!acceptedTypes.includes(file.type) && !file.name.endsWith('.csv') && !file.name.endsWith('.xlsx')) {
+                alert('Please upload a valid CSV or Excel (.xlsx) file.');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+                const sheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[sheetName];
+
+                let jsonArray = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+                if (jsonArray.length < 2) {
+                    alert('The uploaded file must contain a header row and at least one data row.');
+                    return;
+                }
+
+                const headerRow = jsonArray[0].map(h => String(h).trim());
+                const mappedHeader = headerRow.map(h => BULK_HEADER_MAP[h] || h);
+
+                const dataRows = jsonArray.slice(1);
+                const employeeData = dataRows.map(row => {
+                    let employee = {};
+                    mappedHeader.forEach((key, index) => {
+                        // For HR fields, we keep the value as a string. For others, we try to parse it.
+                        let rawValue = row[index] !== undefined && row[index] !== null ? String(row[index]).replace(/,/g, '') : '';
+                        
+                        if (FINANCIAL_KEYS.includes(key)) {
+                            employee[key] = parseFloat(rawValue) || 0;
+                        } else {
+                            // This covers staffName, staffId, staffGrade
+                            employee[key] = rawValue;
+                        }
+                    });
+                    
+                    // Check if all essential financial keys are present
+                    const requiredInputPresent = FINANCIAL_KEYS.every(key => key in employee);
+                    if (requiredInputPresent) {
+                         // Only process rows where Gross Income is greater than 0
+                         if (employee.grossIncome > 0) {
+                            return calculatePITForEmployee(employee);
+                         }
+                    }
+                    return null;
+                }).filter(e => e !== null);
+
+                if (employeeData.length === 0) {
+                    alert('No valid records found after processing. Check your header names and ensure Gross Annual Income is entered for each row.');
+                    return;
+                }
+
+                bulkResult = employeeData;
+                render();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+
+        function downloadBulkResult() {
+            if (!bulkResult || bulkResult.length === 0) {
+                alert("No calculation results to download.");
+                return;
+            }
+
+            // Define the final columns for the output file, starting with the HR fields
+            const outputHeaders = [
+                // HR Input columns
+                "Name of Staff", "Staff ID", "Grade of Staff", 
+                // Financial Input columns
+                "Gross Annual Income", "NHF Contribution", "NHIS Contribution", "Pension Contribution",
+                "Loan Interest", "Life Insurance Premium", "Annual Rent Paid",
+                // Calculated columns
+                "Total Statutory Deductions", "Rent Relief", "Total Deductions", "Taxable Income",
+                "Annual Tax Payable"
+            ];
+
+            // Map the calculated data to the output row structure
+            const outputData = bulkResult.map(res => [
+                // HR Data
+                res.staffName, res.staffId, res.staffGrade,
+                // Financial Data (Input & Calculated)
+                res.grossIncome,
+                res.nhf,
+                res.nhis,
+                res.pension,
+                res.loanInterest,
+                res.lifeInsurance,
+                res.annualRent,
+                res.statutoryDeductions,
+                res.rentRelief,
+                res.totalDeductions,
+                res.taxableIncome,
+                res.taxPayable
+            ]);
+
+            const sheetData = [outputHeaders, ...outputData];
+
+            const ws = XLSX.utils.aoa_to_sheet(sheetData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "PIT Calculations");
+
+            XLSX.writeFile(wb, "PIT_Bulk_Calculation_Results.xlsx");
+        }
+
+        function resetBulkCalculator() {
+            bulkResult = null;
+            const fileInput = document.getElementById('bulkFileInput');
+            if (fileInput) fileInput.value = '';
+            render();
+        }
+
+        // --- RENDER FUNCTIONS (Omitted for brevity, they remain similar, only renderBulkInput is changed) ---
+
+        function renderTabs() {
+            return `
+                <div class="max-w-3xl mx-auto mb-6">
+                    <div class="flex border-b border-gray-300">
+                        <button onclick="currentTab = 'individual'; resetCalculator(); render();"
+                                class="py-3 px-6 text-gray-600 hover:text-green-700 transition-colors ${currentTab === 'individual' ? 'tab-active' : ''}">
+                            👤 Individual Calculation
+                        </button>
+                        <button onclick="currentTab = 'bulk'; resetBulkCalculator(); render();"
+                                class="py-3 px-6 text-gray-600 hover:text-green-700 transition-colors ${currentTab === 'bulk' ? 'tab-active' : ''}">
+                            📊 Bulk Payroll Upload
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function renderResult() {
+            return `
+                <div class="max-w-3xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-6">
+                            <div class="inline-block p-3 bg-green-100 rounded-full mb-4">
+                                <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                </svg>
+                            </div>
+                            <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Result</h2>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div class="bg-blue-50 rounded-lg p-6">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">1. Income & Deductions</h3>
+                                <div class="space-y-2 text-gray-700">
+                                    <div class="flex justify-between">
+                                        <span>Gross Annual Income:</span>
+                                        <span class="font-semibold">${formatCurrency(result.grossIncome)}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Total Statutory Deductions:</span>
+                                        <span>${formatCurrency(result.statutoryDeductions)}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Rent Relief:</span>
+                                        <span>${formatCurrency(result.rentRelief)}</span>
+                                    </div>
+                                    <div class="border-t-2 border-blue-200 mt-2 pt-2 flex justify-between font-semibold">
+                                        <span>Total Deductions:</span>
+                                        <span>${formatCurrency(result.totalDeductions)}</span>
+                                    </div>
+                                    <div class="bg-blue-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
+                                        <span>Taxable Income:</span>
+                                        <span class="text-blue-700">${formatCurrency(result.taxableIncome)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-green-50 rounded-lg p-6">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">2. Progressive Tax Calculation</h3>
+                                <div class="space-y-3">
+                                    ${result.bandDetails.map(band => `
+                                        <div class="bg-white rounded p-3 text-sm">
+                                            <div class="flex justify-between items-center">
+                                                <span class="font-medium text-gray-700">
+                                                    ${band.name} @ ${(band.rate * 100).toFixed(0)}%
+                                                </span>
+                                            </div>
+                                            <div class="flex justify-between text-gray-600 mt-1">
+                                                <span>Taxed: ${formatCurrency(band.taxedAmount)}</span>
+                                                <span class="font-semibold text-green-700">
+                                                    Tax: ${formatCurrency(band.taxInBand)}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-6 text-white text-center">
+                                <div class="text-sm font-medium mb-2">FINAL ANNUAL TAX DUE</div>
+                                <div class="text-4xl font-bold">${formatCurrency(result.taxPayable)}</div>
+                            </div>
+
+                            <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-sm text-gray-700">
+                                <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
+                                <p class="mb-3">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
+                                <div class="text-xs">
+                                    <p class="font-semibold">For Consultation:</p>
+                                    <p>Email: ajiboye4u2005@gmail.com</p>
+                                    <p>WhatsApp: (+234) 08068866727</p>
+                                </div>
+                            </div>
+
+                            <button onclick="resetCalculator()" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                                </svg>
+                                Start New Calculation
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderForm() {
+            const step = steps[currentStep];
+            const progress = ((currentStep + 1) / steps.length) * 100;
+
+            return `
+                <div class="max-w-2xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-8">
+                            <div class="inline-block p-3 bg-green-100 rounded-full mb-4">
+                                <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                </svg>
+                            </div>
+                            <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                                Nigeria PIT Calculator
+                            </h1>
+                            <p class="text-gray-600">Personal Income Tax Estimation Tool</p>
+                        </div>
+
+                        <div class="mb-8">
+                            <div class="flex items-center justify-between mb-2">
+                                <span class="text-sm font-medium text-gray-600">
+                                    Step ${currentStep + 1} of ${steps.length}
+                                </span>
+                                <span class="text-sm font-medium text-green-600">
+                                    ${Math.round(progress)}%
+                                </span>
+                            </div>
+                            <div class="w-full bg-gray-200 rounded-full h-2">
+                                <div class="bg-green-600 h-2 rounded-full transition-all duration-300" style="width: ${progress}%"></div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div>
+                                <label class="block text-lg font-semibold text-gray-800 mb-2">
+                                    ${step.label}
+                                </label>
+                                <div class="relative">
+                                    <span class="absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-500 text-lg">₦</span>
+                                    <input
+                                        type="text"
+                                        id="currentInput"
+                                        value="${formData[step.key] || ''}"
+                                        placeholder="${step.placeholder}"
+                                        class="w-full pl-10 pr-4 py-4 text-lg border-2 border-gray-300 rounded-lg focus:border-green-500 focus:outline-none transition-colors"
+                                        onkeypress="if(event.key === 'Enter') handleNext()"
+                                        oninput="this.value = this.value.replace(/[^0-9.]/g, '')"
+                                    />
+                                </div>
+                                <p class="mt-2 text-sm text-gray-500">${step.hint}</p>
+                            </div>
+
+                            <div class="flex gap-3">
+                                ${currentStep > 0 ? `
+                                    <button onclick="handleBack()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                                        </svg>
+                                        Back
+                                    </button>
+                                ` : ''}
+                                <button onclick="handleNext()" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                    ${currentStep === steps.length - 1 ? 'Calculate Tax' : 'Next'}
+                                    ${currentStep < steps.length - 1 ? `
+                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                        </svg>
+                                    ` : ''}
+                                </button>
+                            </div>
+
+                            ${currentStep === 0 ? `
+                                <div class="bg-blue-50 rounded-lg p-4 text-sm text-gray-700">
+                                    <p class="font-semibold mb-1">ℹ️ What you'll need:</p>
+                                    <ul class="list-disc list-inside space-y-1 text-xs">
+                                        <li>Gross Annual Income</li>
+                                        <li>Statutory Deductions (NHF, NHIS, Pension, etc.)</li>
+                                        <li>Annual Rent (for rent relief calculation)</li>
+                                    </ul>
+                                </div>
+                            ` : ''}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBulkInput() {
+            return `
+                <div class="max-w-3xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Bulk Payroll Calculation</h2>
+
+                        <div class="space-y-6">
+                            <div class="bg-blue-50 border-l-4 border-blue-400 p-4 text-sm text-gray-700">
+                                <p class="font-semibold mb-2">1. Download Input Template:</p>
+                                <p class="mb-3">Use the template below to ensure your column headers are correct, including employee details.</p>
+                                
+                                <button onclick="generateAndDownloadTemplate()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                    </svg>
+                                    Download PIT Input Template (.xlsx)
+                                </button>
+
+                                <p class="font-semibold mt-4 mb-2">2. Upload Payroll File:</p>
+                                <ul class="list-disc list-inside space-y-1 text-xs ml-4">
+                                    <li>Ensure **Gross Annual Income** is correctly entered.</li>
+                                    <li>Use 0 for any statutory deduction that does not apply.</li>
+                                </ul>
+                            </div>
+
+                            <label for="bulkFileInput" class="block text-lg font-semibold text-gray-800 mb-2">
+                                Select File (.csv or .xlsx)
+                            </label>
+                            <input
+                                type="file"
+                                id="bulkFileInput"
+                                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                                class="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer"
+                                onchange="handleFileSelect(event)"
+                            >
+
+                            <button onclick="resetBulkCalculator()" class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                Reset Upload
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBulkResult() {
+             return `
+                <div class="max-w-4xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-6">
+                            <div class="inline-block p-3 bg-green-100 rounded-full mb-4">
+                                <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                                </svg>
+                            </div>
+                            <h2 class="text-3xl font-bold text-gray-800">Bulk Calculation Complete</h2>
+                            <p class="text-gray-600 mt-2">Processed ${bulkResult.length} records. Download the results below.</p>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div class="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-6 text-white text-center">
+                                <div class="text-sm font-medium mb-2">TOTAL ANNUAL TAX ACROSS ALL RECORDS</div>
+                                <div class="text-4xl font-bold">
+                                    ${formatCurrency(bulkResult.reduce((sum, res) => sum + res.taxPayable, 0))}
+                                </div>
+                            </div>
+
+                            <button onclick="downloadBulkResult()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                </svg>
+                                Download Excel/CSV Results (${bulkResult.length} Records)
+                            </button>
+
+                            <button onclick="resetBulkCalculator()" class="w-full bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                Start New Bulk Upload
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        function render() {
+            let content = '';
+
+            if (currentTab === 'individual') {
+                content = result ? renderResult() : renderForm();
+            } else if (currentTab === 'bulk') {
+                content = bulkResult ? renderBulkResult() : renderBulkInput();
+            }
+
+            document.getElementById('app').innerHTML = renderTabs() + content;
+
+            if (currentTab === 'individual' && !result) {
+                setTimeout(() => {
+                    const input = document.getElementById('currentInput');
+                    if (input) input.focus();
+                }, 100);
+            }
+        }
+
+        // Initial render
+        render();
+    </script>
+</body>
+</html>
