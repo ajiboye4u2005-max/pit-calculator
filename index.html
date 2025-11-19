@@ -30,7 +30,7 @@
         const RENT_RELIEF_CAP = 500000;
         const RENT_RELIEF_RATE = 0.20;
         const NHF_RATE = 0.025; // 2.5% of Basic Salary
-        const PENSION_RATE = 0.08; // 8% of Gross Annual Salary
+        const PENSION_RATE = 0.08; // 8% of Pensionable Emoluments (Basic, Housing, Transport)
         
         const PIT_BRACKETS = [
             { limit: 800000, rate: 0.00, name: "First ₦800,000" },
@@ -78,7 +78,7 @@
             "NHIS Contribution", "Loan Interest", "Life Insurance Premium",
             // Computed Deductions (11, 12) - Computed Data
             "NHF Contribution (=2.5%*Basic Salary)", 
-            "Pension Contribution (=8%*Gross Income)", 
+            "Pension Contribution (=8%*(Basic+Housing+Trans))", // <<< UPDATED FORMULA DESCRIPTION
             // Remaining Deduction Input (13) - Input Data
             "Annual Rent Paid",
             // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
@@ -108,9 +108,9 @@
         };
 
         const steps = [
-            { key: 'basicSalary', label: 'Basic Annual Salary', placeholder: 'e.g., 2000000', hint: 'The core annual salary amount. Used to calculate NHF (2.5%).' },
-            { key: 'housingAllowance', label: 'Annual Housing Allowance', placeholder: 'e.g., 1500000', hint: 'Annual housing component of salary.' },
-            { key: 'transportAllowance', label: 'Annual Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Annual transport component of salary.' },
+            { key: 'basicSalary', label: 'Basic Annual Salary', placeholder: 'e.g., 2000000', hint: 'The core annual salary amount. Used to calculate NHF (2.5%) and part of the Pension base.' },
+            { key: 'housingAllowance', label: 'Annual Housing Allowance', placeholder: 'e.g., 1500000', hint: 'Annual housing component of salary. Part of the Pension base.' },
+            { key: 'transportAllowance', label: 'Annual Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Annual transport component of salary. Part of the Pension base.' },
             { key: 'otherAllowances', label: 'Other Annual Allowances', placeholder: 'Enter 0 if none', hint: 'Any other annual allowances/benefits. The sum of these four fields is the Gross Annual Income.' },
             { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
             { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
@@ -185,8 +185,10 @@
             // 2. Calculate Computed Statutory Deductions
             // NHF = 2.5% of Basic Salary
             const computedNhf = basicSalary * NHF_RATE; 
-            // Pension = 8% of Gross Annual Salary
-            const computedPension = grossIncome * PENSION_RATE; 
+            
+            // Pension = 8% of (Basic Salary + Housing Allowance + Transportation Allowance) <<< UPDATED LOGIC
+            const pensionBase = basicSalary + housingAllowance + transportAllowance;
+            const computedPension = pensionBase * PENSION_RATE; 
 
             // 3. Calculate Total Statutory Deductions (computed + input ones)
             const statutoryDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
@@ -719,15 +721,28 @@
                             </div>
 
                             <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-sm text-gray-700">
-                                <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
+                                <p class="font-semibold mb-3">⚠️ IMPORTANT DISCLAIMER</p>
                                 <p class="mb-3">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
-                                <div class="text-xs">
-                                    <p class="font-semibold">For Consultation:</p>
-                                    <p>Email: ajiboye4u2005@gmail.com</p>
-                                    <p>WhatsApp: (+234) 08068866727</p>
+                                
+                                <div class="border-t border-yellow-300 pt-3 mt-3">
+                                    <p class="font-semibold mb-2 text-center">Contact for Professional Consultation:</p>
+                                    <div class="flex space-x-4 justify-center">
+                                        <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">
+                                            <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M12.036 1c-6.07 0-11 4.93-11 11s4.93 11 11 11 11-4.93 11-11-4.93-11-11-11zm0 19.98c-5.46 0-9.946-4.486-9.946-9.946s4.486-9.946 9.946-9.946 9.946 4.486 9.946 9.946-4.486 9.946-9.946 9.946zm2.355-14.823c-.636-.217-3.754-1.802-3.837-1.834-.136-.054-.277-.08-.415-.08-.27 0-.498.05-.724.168-.225.12-.395.32-.51.528-.117.208-.407.97-.478 1.11-.122.215-.246.39-.335.485-.09.096-.184.18-.328.334-.144.155-.308.358-.456.556-.148.197-.248.33-.497.55-.248.22-.507.45-.718.665-.21.215-.34.39-.51.65-.17.26-.35.53-.49.807-.142.277-.197.545-.11.83.085.286.27.48.56.702.29.223.58.455.85.67.27.216.52.395.735.53.21.135.41.24.63.35.22.11.41.17.61.18.2.006.404.004.615-.06.21-.064.39-.18.57-.315.18-.137.33-.31.477-.505.148-.194.27-.37.36-.53.095-.16.17-.286.255-.42.083-.134.19-.31.33-.52.14-.208.24-.31.42-.42.18-.11.37-.15.54-.047.17.106.94.977 1.054 1.25.115.27.228.43.43.51.206.085.39.098.57.065.18-.035.41-.12.63-.228.22-.11.4-.26.57-.424.17-.165.29-.307.39-.47.1-.16.17-.307.245-.443.076-.137.15-.264.22-.38.07-.116.13-.23.18-.33.05-.1.08-.18.12-.27.04-.087.06-.17.07-.26.014-.088.014-.17 0-.25zm-2.355 5.564c-.03 0-.06 0-.09 0s-.06-.01-.09-.01c-.13-.01-.26-.03-.39-.06-.13-.03-.26-.06-.39-.11-.12-.04-.24-.09-.36-.16-.12-.06-.24-.13-.36-.21-.11-.08-.21-.17-.31-.26-.1-.09-.2-.19-.3-.31-.1-.11-.19-.23-.28-.36-.08-.13-.15-.27-.22-.42-.06-.15-.12-.31-.17-.48-.04-.17-.08-.34-.11-.52-.02-.18-.04-.36-.04-.55s0-.38.01-.58c0-.2.01-.39.04-.59.02-.2.06-.39.11-.57.04-.18.09-.37.16-.54.07-.17.16-.33.26-.49.1-.15.22-.29.35-.43.13-.13.27-.26.42-.39.15-.12.31-.23.49-.33.18-.1.37-.18.57-.24.2-.06.4-.1.6-.12.2-.02.4-.02.6-.02.2 0 .4.004.6.012.2.01.4.03.6.06.2.03.4.07.6.13.2.05.4.12.6.2.2.08.4.17.6.28.2.1.4.23.6.36.2.13.3.26.4.39.1.13.2.27.3.42.08.15.15.3.2.47.05.17.09.35.12.54.02.19.04.38.04.58 0 .2-.007.4-.015.6-.01.2-.03.4-.06.6s-.06.4-.12.6c-.05.2-.12.4-.2.6-.08.2-.17.3-.28.5zm1.5-3.5c-.06-.06-.12-.13-.18-.21-.15-.18-.32-.34-.51-.48-.19-.14-.38-.26-.59-.36-.2-.09-.41-.17-.62-.22-.22-.05-.44-.09-.67-.1-.23-.02-.45-.02-.68 0-.23.01-.46.04-.69.09-.23.05-.46.12-.68.22-.22.1-.42.23-.62.38-.2.15-.37.33-.53.53-.16.2-.3.42-.42.66-.12.23-.2.48-.26.74-.06.26-.09.53-.09.8s.03.54.09.8c.06.26.15.5.26.74.12.24.26.46.42.66.16.2.33.37.53.53.2.16.42.3.66.42.23.12.48.2.74.26.26.06.53.09.8.09s.54-.03.8-.09c.26-.06.5-.15.74-.26.24-.12.46-.26.66-.42.2-.16.37-.33.53-.53.16-.2.3-.42.42-.66.12-.23.2-.48.26-.74.06-.26.09-.53.09-.8s-.03-.54-.09-.8c-.06-.26-.15-.5-.26-.74-.12-.24-.26-.46-.42-.66z"/>
+                                                <path d="M16 12.012c0-.28-.23-.51-.51-.51h-3.957v-3.957c0-.28-.23-.51-.51-.51s-.51.23-.51.51v3.957h-3.957c-.28 0-.51.23-.51.51s.23.51.51.51h3.957v3.957c0 .28.23.51.51.51s.51-.23.51-.51v-3.957h3.957c.28 0 .51-.23.51-.51z"/>
+                                            </svg>
+                                            WhatsApp
+                                        </a>
+                                        <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">
+                                            <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                                <path d="M2.003 5.884l7.859 6.273c.513.41 1.258.41 1.77 0l7.859-6.273a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418zM.002 8.773c0-.18.067-.348.18-.48l3.41-3.155c.134-.123.32-.19.515-.19h15.786c.195 0 .38.067.515.19l3.41 3.155c.113.132.18.3.18.48v11.758a.952.952 0 01-.952.952H.954a.952.952 0 01-.952-.952V8.773zm1.904 2.158l.006.005L12 16.57l9.904-5.634.006-.005a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418z"/>
+                                            </svg>
+                                            Email
+                                        </a>
+                                    </div>
                                 </div>
                             </div>
-
                             <button onclick="resetCalculator()" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
@@ -850,7 +865,7 @@
                                 <ul class="list-disc list-inside space-y-1 text-xs ml-4">
                                     <li>Ensure the four salary breakdown columns are present.</li>
                                     <li>**NHF is 2.5% of Basic Salary.**</li>
-                                    <li>**Pension is 8% of Gross Annual Income.**</li>
+                                    <li>**Pension is 8% of (Basic Salary + Housing Allowance + Transportation Allowance).**</li>
                                 </ul>
                             </div>
 
