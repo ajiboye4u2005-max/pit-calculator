@@ -29,6 +29,9 @@
         // --- CONSTANTS ---
         const RENT_RELIEF_CAP = 500000;
         const RENT_RELIEF_RATE = 0.20;
+        const NHF_RATE = 0.025; // 2.5% of Basic Salary
+        const PENSION_RATE = 0.08; // 8% of Gross Annual Salary
+        
         const PIT_BRACKETS = [
             { limit: 800000, rate: 0.00, name: "First ₦800,000" },
             { limit: 2200000, rate: 0.15, name: "Next ₦2,200,000" },
@@ -39,20 +42,54 @@
         const TAX_RATE_HIGHEST = 0.25;
 
         // The keys required for the calculation logic
-        const FINANCIAL_KEYS = ['grossIncome', 'nhf', 'nhis', 'pension', 'loanInterest', 'lifeInsurance', 'annualRent'];
-
-        // Headers for the template and output (including new HR fields)
+        const INPUT_ALLOWANCE_KEYS = ['basicSalary', 'housingAllowance', 'transportAllowance', 'otherAllowances'];
+        const INPUT_DEDUCTION_KEYS = ['nhis', 'loanInterest', 'lifeInsurance', 'annualRent'];
+        const FINANCIAL_KEYS = [...INPUT_ALLOWANCE_KEYS, ...INPUT_DEDUCTION_KEYS];
+        
+        const HR_KEYS = ['staffName', 'staffId', 'staffGrade'];
+        const INPUT_KEYS = [...HR_KEYS, ...FINANCIAL_KEYS];
+        const COMPUTED_KEYS = ['grossIncome', 'computedNhf', 'computedPension'];
+        const OUTPUT_CALC_KEYS = ['statutoryDeductions', 'rentRelief', 'totalDeductions', 'taxableIncome', 'taxPayable'];
+        
+        // Headers for the template (user input)
         const TEMPLATE_HEADERS = [
             "Name of Staff",
             "Staff ID",
             "Grade of Staff",
-            "Gross Annual Income",
-            "NHF Contribution",
+            "Basic Salary",
+            "Housing Allowance",
+            "Transportation Allowance",
+            "Other Allowances",
             "NHIS Contribution",
-            "Pension Contribution",
             "Loan Interest",
             "Life Insurance Premium",
             "Annual Rent Paid"
+        ];
+        
+        // Output Headers (Input and Calculated with Formulas) - Total 23 columns
+        const OUTPUT_HEADERS = [
+            // HR Input columns (0, 1, 2) - Personal Data
+            "Name of Staff", "Staff ID", "Grade of Staff", 
+            // Salary Breakdown Input columns (3, 4, 5, 6) - Input Data
+            "Basic Salary", "Housing Allowance", "Transportation Allowance", "Other Allowances",
+            // Computed Data (Starts here)
+            "Gross Annual Income (=Basic+Housing+Trans+Other)", // (7)
+            // Deduction Inputs (8, 9, 10) - Input Data
+            "NHIS Contribution", "Loan Interest", "Life Insurance Premium",
+            // Computed Deductions (11, 12) - Computed Data
+            "NHF Contribution (=2.5%*Basic Salary)", 
+            "Pension Contribution (=8%*Gross Income)", 
+            // Remaining Deduction Input (13) - Input Data
+            "Annual Rent Paid",
+            // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
+            "Total Statutory Deductions", "Rent Relief", "Total Deductions", "Taxable Income",
+            "Annual Tax Payable", // (18)
+            
+            // --- NEW MONTHLY / RATE HEADERS (19-22) ---
+            "Gross Monthly Salary (=Gross Annual / 12)", // (19)
+            "Monthly Tax Due (=Annual Tax / 12)", // (20)
+            "Worker's Take-Home Pay (Monthly) (=Gross Monthly - Monthly Tax)", // (21)
+            "Effective Tax Rate (Annual Tax / Annual Gross)", // (22)
         ];
         
         // Mapping from Header (key in uploaded file) to internal JS key
@@ -60,23 +97,25 @@
             'Name of Staff': 'staffName',
             'Staff ID': 'staffId',
             'Grade of Staff': 'staffGrade',
-            'Gross Annual Income': 'grossIncome',
-            'NHF Contribution': 'nhf',
+            'Basic Salary': 'basicSalary',
+            'Housing Allowance': 'housingAllowance',
+            'Transportation Allowance': 'transportAllowance',
+            'Other Allowances': 'otherAllowances',
             'NHIS Contribution': 'nhis',
-            'Pension Contribution': 'pension',
             'Loan Interest': 'loanInterest',
             'Life Insurance Premium': 'lifeInsurance',
             'Annual Rent Paid': 'annualRent'
         };
 
         const steps = [
-            { key: 'grossIncome', label: 'Gross Annual Income', placeholder: 'e.g., 5000000', hint: 'Enter your total annual gross income in Naira' },
-            { key: 'nhf', label: 'NHF Contribution (National Housing Fund)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
-            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
-            { key: 'pension', label: 'Pension Contribution', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
-            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
-            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Statutory deduction' },
-            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For rent relief calculation' }
+            { key: 'basicSalary', label: 'Basic Annual Salary', placeholder: 'e.g., 2000000', hint: 'The core annual salary amount. Used to calculate NHF (2.5%).' },
+            { key: 'housingAllowance', label: 'Annual Housing Allowance', placeholder: 'e.g., 1500000', hint: 'Annual housing component of salary.' },
+            { key: 'transportAllowance', label: 'Annual Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Annual transport component of salary.' },
+            { key: 'otherAllowances', label: 'Other Annual Allowances', placeholder: 'Enter 0 if none', hint: 'Any other annual allowances/benefits. The sum of these four fields is the Gross Annual Income.' },
+            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
+            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
+            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
+            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For rent relief calculation.' }
         ];
 
         // --- STATE ---
@@ -94,6 +133,15 @@
                 minimumFractionDigits: 2
             }).format(num);
         }
+        
+        function formatPercentage(num) {
+            return new Intl.NumberFormat('en-NG', {
+                style: 'percent',
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2
+            }).format(num);
+        }
+
 
         /**
          * Generates and downloads an Excel template with the required column headers.
@@ -101,8 +149,8 @@
         function generateAndDownloadTemplate() {
             const sheetData = [
                 TEMPLATE_HEADERS,
-                // Add a sample row for user guidance (HR fields are text, finance fields are 0)
-                ["John Doe", "A1001", "Senior", 0, 0, 0, 0, 0, 0, 0]
+                // Add a sample row for user guidance 
+                ["John Doe", "A1001", "Senior", 2000000, 1500000, 1000000, 500000, 0, 0, 0, 0]
             ];
             
             const ws = XLSX.utils.aoa_to_sheet(sheetData);
@@ -119,16 +167,31 @@
             const staffId = data.staffId || '';
             const staffGrade = data.staffGrade || '';
             
-            // Financial fields are parsed as numbers
-            const grossIncome = parseFloat(data.grossIncome) || 0;
-            const nhf = parseFloat(data.nhf) || 0;
+            // Financial fields are parsed as numbers (New Input Breakdown)
+            const basicSalary = parseFloat(data.basicSalary) || 0;
+            const housingAllowance = parseFloat(data.housingAllowance) || 0;
+            const transportAllowance = parseFloat(data.transportAllowance) || 0;
+            const otherAllowances = parseFloat(data.otherAllowances) || 0;
+            
+            // Input Statutory Deductions
             const nhis = parseFloat(data.nhis) || 0;
-            const pension = parseFloat(data.pension) || 0;
             const loanInterest = parseFloat(data.loanInterest) || 0;
             const lifeInsurance = parseFloat(data.lifeInsurance) || 0;
             const annualRent = parseFloat(data.annualRent) || 0;
 
-            const statutoryDeductions = nhf + nhis + pension + loanInterest + lifeInsurance;
+            // 1. Calculate Gross Annual Income (Sum of new inputs)
+            const grossIncome = basicSalary + housingAllowance + transportAllowance + otherAllowances;
+            
+            // 2. Calculate Computed Statutory Deductions
+            // NHF = 2.5% of Basic Salary
+            const computedNhf = basicSalary * NHF_RATE; 
+            // Pension = 8% of Gross Annual Salary
+            const computedPension = grossIncome * PENSION_RATE; 
+
+            // 3. Calculate Total Statutory Deductions (computed + input ones)
+            const statutoryDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
+            
+            // 4. Calculate Reliefs and Taxable Income (unchanged logic)
             const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
             const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
             const totalDeductions = statutoryDeductions + rentRelief;
@@ -138,7 +201,7 @@
             let taxPayable = 0;
             const bandDetails = [];
 
-            // Progressive Tax Calculation (omitted for brevity, assume correct from previous version)
+            // Progressive Tax Calculation
             for (const bracket of PIT_BRACKETS) {
                 if (remainingTaxable <= 0) break;
                 const taxedAmount = Math.min(remainingTaxable, bracket.limit);
@@ -166,30 +229,195 @@
                     taxInBand
                 });
             }
+            
+            // --- NEW CALCULATIONS ---
+            const grossMonthly = grossIncome / 12;
+            const monthlyTax = taxPayable / 12;
+            const monthlyTakeHome = grossMonthly - monthlyTax;
+            const effectiveTaxRate = grossIncome > 0 ? taxPayable / grossIncome : 0;
 
             return {
-                staffName, // Included new HR fields
+                staffName,
                 staffId,
                 staffGrade,
-                grossIncome,
-                nhf,
+                basicSalary,
+                housingAllowance,
+                transportAllowance,
+                otherAllowances,
+                grossIncome, // Computed field
                 nhis,
-                pension,
                 loanInterest,
                 lifeInsurance,
+                computedNhf, // Computed field
+                computedPension, // Computed field
                 annualRent,
                 statutoryDeductions,
                 rentRelief,
                 totalDeductions,
                 taxableIncome,
                 taxPayable,
+                
+                // New Fields
+                grossMonthly,
+                monthlyTax,
+                monthlyTakeHome,
+                effectiveTaxRate,
+
                 bandDetails
             };
         }
 
+        // --- EXCEL FORMATTING FUNCTION ---
+        /**
+         * Applies formatting to the worksheet for better aesthetics and clarity.
+         * @param {Object} ws - The worksheet object.
+         * @param {number} numRows - The number of data rows (excluding header).
+         */
+        function applyAestheticFormatting(ws, numRows) {
+            const range = XLSX.utils.decode_range(ws['!ref']);
+            const headerRow = range.s.r; // Typically 0
+
+            // Excel Style Definitions
+            const THICK_BORDER = { style: "thick", color: { auto: 1 } };
+            const THIN_BORDER = { style: "thin", color: { auto: 1 } };
+            const CURRENCY_FORMAT = '_("₦"* #,##0.00_);_("₦"* (#,##0.00);_("₦"* "-"??_);_(@_)';
+            const PERCENTAGE_FORMAT = '0.00%'; // For Effective Tax Rate
+            
+            // Column Index Definitions (0-based) for new layout (23 columns total)
+            const COL_HR_END = 2; // Column C: Grade of Staff (Separates Personal Data)
+            const COL_INPUT_END = 13; // Column N: Annual Rent Paid (Separates Input Data from Computed Data)
+            const COL_FINANCIAL_START = 3; // Column D: Basic Salary (First column to receive currency format/background)
+            const COL_TAXABLE_INCOME = 17; // Column R: Taxable Income
+            const COL_TAX_PAYABLE = 18; // Column S: Annual Tax Payable
+            const COL_MONTHLY_TAKE_HOME = 21; // Column V: Worker's Take-Home Pay (Monthly) (Final highlight)
+            const COL_RATE = 22; // Column W: Effective Tax Rate (Special formatting for percentage)
+
+            // 1. Currency/Percentage Format
+            // Apply to all financial columns (D to W, or 3 to 22)
+            for (let R = headerRow + 1; R <= range.e.r; ++R) {
+                for (let C = COL_FINANCIAL_START; C <= range.e.c; ++C) {
+                    const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
+                    if (ws[cellAddress] && ws[cellAddress].t === 'n') {
+                        // Apply currency format to all number cells except the last one (Effective Tax Rate)
+                        if (C !== COL_RATE) {
+                            ws[cellAddress].z = CURRENCY_FORMAT;
+                        } else {
+                            // Apply percentage format to Effective Tax Rate
+                            ws[cellAddress].z = PERCENTAGE_FORMAT; 
+                        }
+                    }
+                }
+            }
+
+            // 2. Header Style (Bold, Centered, Green Background, Thin Borders for inner separation)
+            const headerStyle = {
+                font: { bold: true, color: { rgb: "FFFFFF" } },
+                fill: { fgColor: { rgb: "047857" } }, // Emerald-700
+                alignment: { horizontal: "center", vertical: "center", wrapText: true },
+                border: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER }
+            };
+
+            for (let C = range.s.c; C <= range.e.c; ++C) {
+                const cellAddress = XLSX.utils.encode_cell({ c: C, r: headerRow });
+                ws[cellAddress] = { ...ws[cellAddress], s: headerStyle };
+            }
+
+            // 3. Differentiate Input (Yellow-ish) vs. Output (Blue-ish)
+            const inputStyle = { fill: { fgColor: { rgb: "FFFACD" } } }; // Lemon Chiffon
+            const outputStyle = { fill: { fgColor: { rgb: "E6F7FF" } } }; // Pale Blue
+            
+            // Final result style (Light Green Highlight)
+            const finalResultStyle = { 
+                font: { bold: true },
+                fill: { fgColor: { rgb: "CCEECC" } }, 
+                border: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER }
+            };
+
+
+            for (let R = headerRow + 1; R <= range.e.r; ++R) {
+                // Apply input background to salary breakdown (Cols 3 to 6)
+                for (let C = COL_FINANCIAL_START; C <= 6; ++C) {
+                    const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
+                    if (!ws[cellAddress].s) ws[cellAddress].s = {};
+                    ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
+                }
+                
+                // Apply output background to computed Gross Income (Col 7)
+                let grossIncomeAddr = XLSX.utils.encode_cell({ c: 7, r: R });
+                if (!ws[grossIncomeAddr].s) ws[grossIncomeAddr].s = {};
+                ws[grossIncomeAddr].s = { ...ws[grossIncomeAddr].s, ...outputStyle };
+                
+                // Apply input background to remaining inputs (NHIS, Loan, Insurance, Rent) (Cols 8, 9, 10, 13)
+                [8, 9, 10, 13].forEach(C => {
+                    const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
+                    if (!ws[cellAddress].s) ws[cellAddress].s = {};
+                    ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
+                });
+
+                // Apply output background to all computed deduction/result columns (Cols 7, 11, 12, 14 to 22)
+                for (let C = 7; C <= range.e.c; ++C) {
+                    // Skip input columns 8, 9, 10, 13, which were already marked as input
+                    if ([8, 9, 10, 13].includes(C)) continue; 
+
+                    const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
+                    if (!ws[cellAddress].s) ws[cellAddress].s = {};
+                    ws[cellAddress].s = { ...ws[cellAddress].s, ...outputStyle };
+                }
+
+
+                // Apply special final result style to key outputs
+                // Taxable Income (Column 17)
+                let taxableIncomeAddr = XLSX.utils.encode_cell({ c: COL_TAXABLE_INCOME, r: R });
+                if (!ws[taxableIncomeAddr].s) ws[taxableIncomeAddr].s = {};
+                ws[taxableIncomeAddr].s = { ...ws[taxableIncomeAddr].s, ...finalResultStyle };
+
+                // Annual Tax Payable (Column 18)
+                let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_TAX_PAYABLE, r: R });
+                if (!ws[taxPayableAddr].s) ws[taxPayableAddr].s = {};
+                ws[taxPayableAddr].s = { ...ws[taxPayableAddr].s, ...finalResultStyle };
+
+                // Monthly Take-Home Pay (Column 21)
+                let takeHomeAddr = XLSX.utils.encode_cell({ c: COL_MONTHLY_TAKE_HOME, r: R });
+                if (!ws[takeHomeAddr].s) ws[takeHomeAddr].s = {};
+                ws[takeHomeAddr].s = { ...ws[takeHomeAddr].s, ...finalResultStyle };
+            }
+
+            // 4. Apply THICK Borders for Section Separation
+            for (let R = headerRow; R <= range.e.r; ++R) {
+                // --- Separation 1: HR Data (Col 2, Grade of Staff) and Financial Data (Col 3) ---
+                let cellAddr1 = XLSX.utils.encode_cell({ c: COL_HR_END, r: R });
+                if (!ws[cellAddr1]) ws[cellAddr1] = {};
+                if (!ws[cellAddr1].s) ws[cellAddr1].s = {};
+                if (!ws[cellAddr1].s.border) ws[cellAddr1].s.border = {};
+                ws[cellAddr1].s.border.right = THICK_BORDER;
+
+                // --- Separation 2: Input Data (Col 13, Annual Rent Paid) and Computed Data (Col 14) ---
+                let cellAddr2 = XLSX.utils.encode_cell({ c: COL_INPUT_END, r: R });
+                if (!ws[cellAddr2]) ws[cellAddr2] = {};
+                if (!ws[cellAddr2].s) ws[cellAddr2].s = {};
+                if (!ws[cellAddr2].s.border) ws[cellAddr2].s.border = {};
+                ws[cellAddr2].s.border.right = THICK_BORDER;
+            }
+
+            // 5. Auto-width Columns (Best Effort)
+            const columnWidths = OUTPUT_HEADERS.map((header, index) => {
+                let w = header.length + 4; // Base width based on header length
+                // Increase width for financial columns
+                if (index >= COL_FINANCIAL_START) {
+                    w = Math.max(w, 20); // Minimum width for formatted currency columns
+                }
+                // Ensure formula columns are wide enough
+                if (index === 7 || index === 11 || index === 12 || index === 19 || index === 20 || index === 21 || index === 22) {
+                    w = Math.max(w, 35);
+                }
+                return { wch: w };
+            });
+            ws['!cols'] = columnWidths;
+        }
+
         // --- INDIVIDUAL CALCULATION LOGIC (Simplified) ---
         function calculatePIT() {
-            // Note: Individual calculation doesn't use the HR fields, so we only pass the financial data
+            // Individual calculation doesn't use the HR fields, but the function handles it gracefully
             result = calculatePITForEmployee(formData);
             render();
         }
@@ -198,18 +426,20 @@
             const input = document.getElementById('currentInput');
             const valueStr = input.value.replace(/,/g, '');
             const value = parseFloat(valueStr || '0');
+            const currentKey = steps[currentStep].key;
 
             if (isNaN(value) || value < 0) {
                 alert('Please enter a valid positive number');
                 return;
             }
 
-            if (currentStep === 0 && value === 0 && input.value !== '0') {
-                 alert('Please enter your Gross Annual Income.');
+            // Check for zero Basic Salary, as it's critical for computation
+            if (currentKey === 'basicSalary' && value === 0 && input.value !== '0') {
+                 alert('Basic Annual Salary cannot be zero for calculation.');
                 return;
             }
 
-            formData[steps[currentStep].key] = value;
+            formData[currentKey] = value;
 
             if (currentStep < steps.length - 1) {
                 currentStep++;
@@ -277,22 +507,18 @@
                 const employeeData = dataRows.map(row => {
                     let employee = {};
                     mappedHeader.forEach((key, index) => {
-                        // For HR fields, we keep the value as a string. For others, we try to parse it.
                         let rawValue = row[index] !== undefined && row[index] !== null ? String(row[index]).replace(/,/g, '') : '';
                         
                         if (FINANCIAL_KEYS.includes(key)) {
                             employee[key] = parseFloat(rawValue) || 0;
                         } else {
-                            // This covers staffName, staffId, staffGrade
                             employee[key] = rawValue;
                         }
                     });
                     
-                    // Check if all essential financial keys are present
-                    const requiredInputPresent = FINANCIAL_KEYS.every(key => key in employee);
-                    if (requiredInputPresent) {
-                         // Only process rows where Gross Income is greater than 0
-                         if (employee.grossIncome > 0) {
+                    const requiredAllowancePresent = INPUT_ALLOWANCE_KEYS.every(key => key in employee);
+                    if (requiredAllowancePresent) {
+                         if (employee.basicSalary > 0) {
                             return calculatePITForEmployee(employee);
                          }
                     }
@@ -300,7 +526,7 @@
                 }).filter(e => e !== null);
 
                 if (employeeData.length === 0) {
-                    alert('No valid records found after processing. Check your header names and ensure Gross Annual Income is entered for each row.');
+                    alert('No valid records found after processing. Check your header names and ensure Basic Salary is entered for each row.');
                     return;
                 }
 
@@ -317,43 +543,53 @@
                 return;
             }
 
-            // Define the final columns for the output file, starting with the HR fields
-            const outputHeaders = [
-                // HR Input columns
-                "Name of Staff", "Staff ID", "Grade of Staff", 
-                // Financial Input columns
-                "Gross Annual Income", "NHF Contribution", "NHIS Contribution", "Pension Contribution",
-                "Loan Interest", "Life Insurance Premium", "Annual Rent Paid",
-                // Calculated columns
-                "Total Statutory Deductions", "Rent Relief", "Total Deductions", "Taxable Income",
-                "Annual Tax Payable"
-            ];
-
-            // Map the calculated data to the output row structure
+            // Map the calculated data to the output row structure (23 columns)
             const outputData = bulkResult.map(res => [
-                // HR Data
+                // HR Data (0, 1, 2)
                 res.staffName, res.staffId, res.staffGrade,
-                // Financial Data (Input & Calculated)
-                res.grossIncome,
-                res.nhf,
+                // Salary Breakdown Inputs (3, 4, 5, 6)
+                res.basicSalary,
+                res.housingAllowance,
+                res.transportAllowance,
+                res.otherAllowances,
+                // Computed Gross Income (7)
+                res.grossIncome, 
+                // Deduction Inputs (8, 9, 10)
                 res.nhis,
-                res.pension,
                 res.loanInterest,
                 res.lifeInsurance,
+                // Computed Deductions (11, 12)
+                res.computedNhf, 
+                res.computedPension, 
+                // Remaining Deduction Input (13)
                 res.annualRent,
+                // Calculated columns (14, 15, 16, 17, 18)
                 res.statutoryDeductions,
                 res.rentRelief,
                 res.totalDeductions,
                 res.taxableIncome,
-                res.taxPayable
+                res.taxPayable,
+                
+                // --- NEW FIELDS (19-22) ---
+                res.grossMonthly,
+                res.monthlyTax,
+                res.monthlyTakeHome,
+                res.effectiveTaxRate // Percentage, will be formatted in applyAestheticFormatting
             ]);
 
-            const sheetData = [outputHeaders, ...outputData];
+            const sheetData = [OUTPUT_HEADERS, ...outputData];
 
-            const ws = XLSX.utils.aoa_to_sheet(sheetData);
             const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "PIT Calculations");
-
+            
+            // Create a temporary worksheet and apply cell styling immediately
+            // Must use { cellStyles: true } to enable complex styling
+            const tempSheet = XLSX.utils.aoa_to_sheet(sheetData, { cellStyles: true });
+            
+            // Apply formatting styles
+            applyAestheticFormatting(tempSheet, outputData.length);
+            
+            XLSX.utils.book_append_sheet(wb, tempSheet, "PIT Calculations");
+            
             XLSX.writeFile(wb, "PIT_Bulk_Calculation_Results.xlsx");
         }
 
@@ -364,7 +600,7 @@
             render();
         }
 
-        // --- RENDER FUNCTIONS (Omitted for brevity, they remain similar, only renderBulkInput is changed) ---
+        // --- RENDER FUNCTIONS (Web UI) ---
 
         function renderTabs() {
             return `
@@ -384,6 +620,9 @@
         }
         
         function renderResult() {
+            const grossIncome = result.grossIncome;
+            const annualTax = result.taxPayable;
+
             return `
                 <div class="max-w-3xl mx-auto">
                     <div class="bg-white rounded-2xl shadow-xl p-8">
@@ -398,12 +637,42 @@
 
                         <div class="space-y-6">
                             <div class="bg-blue-50 rounded-lg p-6">
-                                <h3 class="text-xl font-semibold text-gray-800 mb-4">1. Income & Deductions</h3>
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">1. Annual & Monthly Summary</h3>
                                 <div class="space-y-2 text-gray-700">
-                                    <div class="flex justify-between">
+                                    <div class="flex justify-between font-bold text-lg border-b border-blue-200 pb-2 mb-2">
                                         <span>Gross Annual Income:</span>
-                                        <span class="font-semibold">${formatCurrency(result.grossIncome)}</span>
+                                        <span class="text-blue-700">${formatCurrency(grossIncome)}</span>
                                     </div>
+                                    <div class="flex justify-between">
+                                        <span class="font-bold">Annual Tax Payable:</span>
+                                        <span class="font-bold text-red-600">${formatCurrency(annualTax)}</span>
+                                    </div>
+                                    
+                                    <div class="border-t border-dashed border-blue-200 mt-4 pt-4"></div>
+                                    
+                                    <div class="flex justify-between">
+                                        <span>Gross Monthly Salary:</span>
+                                        <span class="font-semibold">${formatCurrency(result.grossMonthly)}</span>
+                                    </div>
+                                    <div class="flex justify-between">
+                                        <span>Monthly Tax Due:</span>
+                                        <span class="font-semibold text-red-600">${formatCurrency(result.monthlyTax)}</span>
+                                    </div>
+                                    <div class="bg-blue-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
+                                        <span>Worker's Monthly Take-Home Pay:</span>
+                                        <span class="text-green-700">${formatCurrency(result.monthlyTakeHome)}</span>
+                                    </div>
+                                    
+                                    <div class="bg-yellow-100 rounded p-3 mt-3 flex justify-between font-semibold text-base">
+                                        <span>Effective Tax Rate (Annual Tax / Annual Gross):</span>
+                                        <span class="text-yellow-700">${formatPercentage(result.effectiveTaxRate)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-gray-50 rounded-lg p-6">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">2. Taxable Income & Deductions</h3>
+                                <div class="space-y-2 text-gray-700">
                                     <div class="flex justify-between">
                                         <span>Total Statutory Deductions:</span>
                                         <span>${formatCurrency(result.statutoryDeductions)}</span>
@@ -412,19 +681,19 @@
                                         <span>Rent Relief:</span>
                                         <span>${formatCurrency(result.rentRelief)}</span>
                                     </div>
-                                    <div class="border-t-2 border-blue-200 mt-2 pt-2 flex justify-between font-semibold">
+                                    <div class="border-t-2 border-gray-200 mt-2 pt-2 flex justify-between font-semibold">
                                         <span>Total Deductions:</span>
                                         <span>${formatCurrency(result.totalDeductions)}</span>
                                     </div>
-                                    <div class="bg-blue-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
+                                    <div class="bg-green-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
                                         <span>Taxable Income:</span>
-                                        <span class="text-blue-700">${formatCurrency(result.taxableIncome)}</span>
+                                        <span class="text-green-700">${formatCurrency(result.taxableIncome)}</span>
                                     </div>
                                 </div>
                             </div>
-
+                            
                             <div class="bg-green-50 rounded-lg p-6">
-                                <h3 class="text-xl font-semibold text-gray-800 mb-4">2. Progressive Tax Calculation</h3>
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">3. Progressive Tax Bands</h3>
                                 <div class="space-y-3">
                                     ${result.bandDetails.map(band => `
                                         <div class="bg-white rounded p-3 text-sm">
@@ -547,9 +816,9 @@
                                 <div class="bg-blue-50 rounded-lg p-4 text-sm text-gray-700">
                                     <p class="font-semibold mb-1">ℹ️ What you'll need:</p>
                                     <ul class="list-disc list-inside space-y-1 text-xs">
-                                        <li>Gross Annual Income</li>
-                                        <li>Statutory Deductions (NHF, NHIS, Pension, etc.)</li>
-                                        <li>Annual Rent (for rent relief calculation)</li>
+                                        <li>Basic Salary and Allowance breakdown (4 steps)</li>
+                                        <li>Other Statutory Deductions (NHIS, Loan, Insurance)</li>
+                                        <li>Annual Rent Paid</li>
                                     </ul>
                                 </div>
                             ` : ''}
@@ -568,7 +837,7 @@
                         <div class="space-y-6">
                             <div class="bg-blue-50 border-l-4 border-blue-400 p-4 text-sm text-gray-700">
                                 <p class="font-semibold mb-2">1. Download Input Template:</p>
-                                <p class="mb-3">Use the template below to ensure your column headers are correct, including employee details.</p>
+                                <p class="mb-3">Use the template below to ensure your column headers are correct. **Do not include NHF or Pension columns**, as they are now automatically computed.</p>
                                 
                                 <button onclick="generateAndDownloadTemplate()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -579,8 +848,9 @@
 
                                 <p class="font-semibold mt-4 mb-2">2. Upload Payroll File:</p>
                                 <ul class="list-disc list-inside space-y-1 text-xs ml-4">
-                                    <li>Ensure **Gross Annual Income** is correctly entered.</li>
-                                    <li>Use 0 for any statutory deduction that does not apply.</li>
+                                    <li>Ensure the four salary breakdown columns are present.</li>
+                                    <li>**NHF is 2.5% of Basic Salary.**</li>
+                                    <li>**Pension is 8% of Gross Annual Income.**</li>
                                 </ul>
                             </div>
 
@@ -605,6 +875,10 @@
         }
 
         function renderBulkResult() {
+             const totalAnnualTax = bulkResult.reduce((sum, res) => sum + res.taxPayable, 0);
+             const totalGrossMonthly = bulkResult.reduce((sum, res) => sum + res.grossMonthly, 0);
+             const totalMonthlyTax = bulkResult.reduce((sum, res) => sum + res.monthlyTax, 0);
+
              return `
                 <div class="max-w-4xl mx-auto">
                     <div class="bg-white rounded-2xl shadow-xl p-8">
@@ -622,9 +896,22 @@
                             <div class="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-6 text-white text-center">
                                 <div class="text-sm font-medium mb-2">TOTAL ANNUAL TAX ACROSS ALL RECORDS</div>
                                 <div class="text-4xl font-bold">
-                                    ${formatCurrency(bulkResult.reduce((sum, res) => sum + res.taxPayable, 0))}
+                                    ${formatCurrency(totalAnnualTax)}
                                 </div>
                             </div>
+                            
+                            <div class="bg-blue-50 rounded-lg p-6 text-gray-700">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4">Monthly Payroll Totals</h3>
+                                <div class="flex justify-between font-medium text-lg border-b border-blue-200 pb-2 mb-2">
+                                    <span>Total Gross Monthly Salary:</span>
+                                    <span class="text-blue-700">${formatCurrency(totalGrossMonthly)}</span>
+                                </div>
+                                <div class="flex justify-between font-medium text-lg">
+                                    <span>Total Monthly Tax Due:</span>
+                                    <span class="text-red-600 font-bold">${formatCurrency(totalMonthlyTax)}</span>
+                                </div>
+                            </div>
+
 
                             <button onclick="downloadBulkResult()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
