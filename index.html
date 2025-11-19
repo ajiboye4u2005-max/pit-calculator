@@ -198,6 +198,10 @@
             const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
             const totalDeductions = statutoryDeductions + rentRelief;
             const taxableIncome = Math.max(0, grossIncome - totalDeductions);
+            
+            // Calculate Annual Net Income (Before Tax) - This is for the "Take-home pay" section
+            const annualIncomeBeforeTax = grossIncome - totalDeductions;
+
 
             let remainingTaxable = taxableIncome;
             let taxPayable = 0;
@@ -232,10 +236,14 @@
                 });
             }
             
-            // --- NEW CALCULATIONS ---
+            // Calculate Net Annual Take-Home Pay (After all deductions and tax)
+            const annualTakeHome = grossIncome - totalDeductions - taxPayable;
+            
+            // --- NEW MONTHLY CALCULATIONS ---
             const grossMonthly = grossIncome / 12;
+            const monthlyDeductions = totalDeductions / 12;
             const monthlyTax = taxPayable / 12;
-            const monthlyTakeHome = grossMonthly - monthlyTax;
+            const monthlyTakeHome = annualTakeHome / 12; // monthlyTakeHome is also grossMonthly - monthlyDeductions - monthlyTax
             const effectiveTaxRate = grossIncome > 0 ? taxPayable / grossIncome : 0;
 
             return {
@@ -256,11 +264,14 @@
                 statutoryDeductions,
                 rentRelief,
                 totalDeductions,
+                annualIncomeBeforeTax, // New computed field
                 taxableIncome,
                 taxPayable,
+                annualTakeHome, // New computed field
                 
                 // New Fields
                 grossMonthly,
+                monthlyDeductions, // New computed field
                 monthlyTax,
                 monthlyTakeHome,
                 effectiveTaxRate,
@@ -622,8 +633,10 @@
         }
         
         function renderResult() {
-            const grossIncome = result.grossIncome;
-            const annualTax = result.taxPayable;
+            const R = result; // Shorthand for result object
+
+            const NetAnnualIncome = R.grossIncome - R.totalDeductions;
+            const FinalAnnualTakeHome = R.grossIncome - R.totalDeductions - R.taxPayable;
 
             return `
                 <div class="max-w-3xl mx-auto">
@@ -634,115 +647,132 @@
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
                                 </svg>
                             </div>
-                            <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Result</h2>
+                            <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Breakdown (Annual)</h2>
                         </div>
 
-                        <div class="space-y-6">
+                        <div class="space-y-8">
+                            
                             <div class="bg-blue-50 rounded-lg p-6">
-                                <h3 class="text-xl font-semibold text-gray-800 mb-4">1. Annual & Monthly Summary</h3>
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2 border-blue-200">1. Gross Annual Salary</h3>
                                 <div class="space-y-2 text-gray-700">
-                                    <div class="flex justify-between font-bold text-lg border-b border-blue-200 pb-2 mb-2">
-                                        <span>Gross Annual Income:</span>
-                                        <span class="text-blue-700">${formatCurrency(grossIncome)}</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span class="font-bold">Annual Tax Payable:</span>
-                                        <span class="font-bold text-red-600">${formatCurrency(annualTax)}</span>
-                                    </div>
-                                    
-                                    <div class="border-t border-dashed border-blue-200 mt-4 pt-4"></div>
-                                    
-                                    <div class="flex justify-between">
-                                        <span>Gross Monthly Salary:</span>
-                                        <span class="font-semibold">${formatCurrency(result.grossMonthly)}</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span>Monthly Tax Due:</span>
-                                        <span class="font-semibold text-red-600">${formatCurrency(result.monthlyTax)}</span>
-                                    </div>
-                                    <div class="bg-blue-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
-                                        <span>Worker's Monthly Take-Home Pay:</span>
-                                        <span class="text-green-700">${formatCurrency(result.monthlyTakeHome)}</span>
-                                    </div>
-                                    
-                                    <div class="bg-yellow-100 rounded p-3 mt-3 flex justify-between font-semibold text-base">
-                                        <span>Effective Tax Rate (Annual Tax / Annual Gross):</span>
-                                        <span class="text-yellow-700">${formatPercentage(result.effectiveTaxRate)}</span>
+                                    <div class="flex justify-between"><span>Basic Annual Salary:</span><span>${formatCurrency(R.basicSalary)}</span></div>
+                                    <div class="flex justify-between"><span>Annual Housing Allowance:</span><span>${formatCurrency(R.housingAllowance)}</span></div>
+                                    <div class="flex justify-between"><span>Annual Transportation Allowance:</span><span>${formatCurrency(R.transportAllowance)}</span></div>
+                                    <div class="flex justify-between"><span>Other Annual Allowances:</span><span>${formatCurrency(R.otherAllowances)}</span></div>
+                                    <div class="border-t-2 border-blue-300 mt-2 pt-2 flex justify-between font-bold text-lg">
+                                        <span>Total Gross Annual Income:</span>
+                                        <span class="text-blue-700">${formatCurrency(R.grossIncome)}</span>
                                     </div>
                                 </div>
                             </div>
 
                             <div class="bg-gray-50 rounded-lg p-6">
-                                <h3 class="text-xl font-semibold text-gray-800 mb-4">2. Taxable Income & Deductions</h3>
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2 border-gray-200">2. Annual Eligible Deductions</h3>
                                 <div class="space-y-2 text-gray-700">
-                                    <div class="flex justify-between">
-                                        <span>Total Statutory Deductions:</span>
-                                        <span>${formatCurrency(result.statutoryDeductions)}</span>
-                                    </div>
-                                    <div class="flex justify-between">
-                                        <span>Rent Relief:</span>
-                                        <span>${formatCurrency(result.rentRelief)}</span>
-                                    </div>
-                                    <div class="border-t-2 border-gray-200 mt-2 pt-2 flex justify-between font-semibold">
-                                        <span>Total Deductions:</span>
-                                        <span>${formatCurrency(result.totalDeductions)}</span>
-                                    </div>
-                                    <div class="bg-green-100 rounded p-3 mt-3 flex justify-between font-bold text-lg">
-                                        <span>Taxable Income:</span>
-                                        <span class="text-green-700">${formatCurrency(result.taxableIncome)}</span>
+                                    <p class="font-medium text-sm text-gray-600 mb-2">Statutory Contributions:</p>
+                                    <div class="flex justify-between"><span>NHF Contribution (2.5% of Basic):</span><span>${formatCurrency(R.computedNhf)}</span></div>
+                                    <div class="flex justify-between"><span>Pension Contribution (8% of Basic, Housing, & Transport):</span><span>${formatCurrency(R.computedPension)}</span></div>
+                                    <div class="flex justify-between"><span>NHIS Contribution:</span><span>${formatCurrency(R.nhis)}</span></div>
+                                    <div class="flex justify-between"><span>Loan Interest Paid:</span><span>${formatCurrency(R.loanInterest)}</span></div>
+                                    <div class="flex justify-between"><span>Life Insurance Premium:</span><span>${formatCurrency(R.lifeInsurance)}</span></div>
+                                    <div class="border-t border-dashed border-gray-300 my-2"></div>
+                                    <p class="font-medium text-sm text-gray-600 mb-2">Other Relief:</p>
+                                    <div class="flex justify-between"><span>Rent Relief (20% of Annual Rent, max ₦${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')}):</span><span>${formatCurrency(R.rentRelief)}</span></div>
+                                    <div class="border-t-2 border-gray-300 mt-2 pt-2 flex justify-between font-bold text-lg">
+                                        <span>Total Eligible Deductions & Relief:</span>
+                                        <span class="text-green-700">${formatCurrency(R.totalDeductions)}</span>
                                     </div>
                                 </div>
                             </div>
                             
                             <div class="bg-green-50 rounded-lg p-6">
-                                <h3 class="text-xl font-semibold text-gray-800 mb-4">3. Progressive Tax Bands</h3>
-                                <div class="space-y-3">
-                                    ${result.bandDetails.map(band => `
-                                        <div class="bg-white rounded p-3 text-sm">
-                                            <div class="flex justify-between items-center">
-                                                <span class="font-medium text-gray-700">
-                                                    ${band.name} @ ${(band.rate * 100).toFixed(0)}%
-                                                </span>
-                                            </div>
-                                            <div class="flex justify-between text-gray-600 mt-1">
-                                                <span>Taxed: ${formatCurrency(band.taxedAmount)}</span>
-                                                <span class="font-semibold text-green-700">
-                                                    Tax: ${formatCurrency(band.taxInBand)}
-                                                </span>
-                                            </div>
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2 border-green-200">3. Annual Tax Progressive Computation</h3>
+                                <div class="space-y-2 text-gray-700">
+                                    <div class="bg-green-100 rounded p-3 mb-4 flex justify-between font-bold text-lg">
+                                        <span>Taxable Income (Gross - Total Deductions):</span>
+                                        <span class="text-green-700">${formatCurrency(R.taxableIncome)}</span>
+                                    </div>
+                                    
+                                    <p class="font-medium text-sm text-gray-600 mb-2">Tax Bands Breakdown:</p>
+                                    ${R.bandDetails.map(band => `
+                                        <div class="flex justify-between text-sm bg-white rounded p-2">
+                                            <span class="font-medium text-gray-700">
+                                                ${band.name} @ ${(band.rate * 100).toFixed(0)}%
+                                            </span>
+                                            <span class="font-semibold text-green-700">
+                                                ${formatCurrency(band.taxInBand)}
+                                            </span>
                                         </div>
                                     `).join('')}
-                                </div>
-                            </div>
 
-                            <div class="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-6 text-white text-center">
-                                <div class="text-sm font-medium mb-2">FINAL ANNUAL TAX DUE</div>
-                                <div class="text-4xl font-bold">${formatCurrency(result.taxPayable)}</div>
-                            </div>
-
-                            <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-sm text-gray-700">
-                                <p class="font-semibold mb-3">⚠️ IMPORTANT DISCLAIMER</p>
-                                <p class="mb-3">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
-                                
-                                <div class="border-t border-yellow-300 pt-3 mt-3">
-                                    <p class="font-semibold mb-2 text-center">Contact for Professional Consultation:</p>
-                                    <div class="flex space-x-4 justify-center">
-                                        <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">
-                                            <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
-                                                <path d="M12.036 1c-6.07 0-11 4.93-11 11s4.93 11 11 11 11-4.93 11-11-4.93-11-11-11zm0 19.98c-5.46 0-9.946-4.486-9.946-9.946s4.486-9.946 9.946-9.946 9.946 4.486 9.946 9.946-4.486 9.946-9.946 9.946zm2.355-14.823c-.636-.217-3.754-1.802-3.837-1.834-.136-.054-.277-.08-.415-.08-.27 0-.498.05-.724.168-.225.12-.395.32-.51.528-.117.208-.407.97-.478 1.11-.122.215-.246.39-.335.485-.09.096-.184.18-.328.334-.144.155-.308.358-.456.556-.148.197-.248.33-.497.55-.248.22-.507.45-.718.665-.21.215-.34.39-.51.65-.17.26-.35.53-.49.807-.142.277-.197.545-.11.83.085.286.27.48.56.702.29.223.58.455.85.67.27.216.52.395.735.53.21.135.41.24.63.35.22.11.41.17.61.18.2.006.404.004.615-.06.21-.064.39-.18.57-.315.18-.137.33-.31.477-.505.148-.194.27-.37.36-.53.095-.16.17-.286.255-.42.083-.134.19-.31.33-.52.14-.208.24-.31.42-.42.18-.11.37-.15.54-.047.17.106.94.977 1.054 1.25.115.27.228.43.43.51.206.085.39.098.57.065.18-.035.41-.12.63-.228.22-.11.4-.26.57-.424.17-.165.29-.307.39-.47.1-.16.17-.307.245-.443.076-.137.15-.264.22-.38.07-.116.13-.23.18-.33.05-.1.08-.18.12-.27.04-.087.06-.17.07-.26.014-.088.014-.17 0-.25zm-2.355 5.564c-.03 0-.06 0-.09 0s-.06-.01-.09-.01c-.13-.01-.26-.03-.39-.06-.13-.03-.26-.06-.39-.11-.12-.04-.24-.09-.36-.16-.12-.06-.24-.13-.36-.21-.11-.08-.21-.17-.31-.26-.1-.09-.2-.19-.3-.31-.1-.11-.19-.23-.28-.36-.08-.13-.15-.27-.22-.42-.06-.15-.12-.31-.17-.48-.04-.17-.08-.34-.11-.52-.02-.18-.04-.36-.04-.55s0-.38.01-.58c0-.2.01-.39.04-.59.02-.2.06-.39.11-.57.04-.18.09-.37.16-.54.07-.17.16-.33.26-.49.1-.15.22-.29.35-.43.13-.13.27-.26.42-.39.15-.12.31-.23.49-.33.18-.1.37-.18.57-.24.2-.06.4-.1.6-.12.2-.02.4-.02.6-.02.2 0 .4.004.6.012.2.01.4.03.6.06.2.03.4.07.6.13.2.05.4.12.6.2.2.08.4.17.6.28.2.1.4.23.6.36.2.13.3.26.4.39.1.13.2.27.3.42.08.15.15.3.2.47.05.17.09.35.12.54.02.19.04.38.04.58 0 .2-.007.4-.015.6-.01.2-.03.4-.06.6s-.06.4-.12.6c-.05.2-.12.4-.2.6-.08.2-.17.3-.28.5zm1.5-3.5c-.06-.06-.12-.13-.18-.21-.15-.18-.32-.34-.51-.48-.19-.14-.38-.26-.59-.36-.2-.09-.41-.17-.62-.22-.22-.05-.44-.09-.67-.1-.23-.02-.45-.02-.68 0-.23.01-.46.04-.69.09-.23.05-.46.12-.68.22-.22.1-.42.23-.62.38-.2.15-.37.33-.53.53-.16.2-.3.42-.42.66-.12.23-.2.48-.26.74-.06.26-.09.53-.09.8s.03.54.09.8c.06.26.15.5.26.74.12.24.26.46.42.66.16.2.33.37.53.53.2.16.42.3.66.42.23.12.48.2.74.26.26.06.53.09.8.09s.54-.03.8-.09c.26-.06.5-.15.74-.26.24-.12.46-.26.66-.42.2-.16.37-.33.53-.53.16-.2.3-.42.42-.66.12-.23.2-.48.26-.74.06-.26.09-.53.09-.8s-.03-.54-.09-.8c-.06-.26-.15-.5-.26-.74-.12-.24-.26-.46-.42-.66z"/>
-                                                <path d="M16 12.012c0-.28-.23-.51-.51-.51h-3.957v-3.957c0-.28-.23-.51-.51-.51s-.51.23-.51.51v3.957h-3.957c-.28 0-.51.23-.51.51s.23.51.51.51h3.957v3.957c0 .28.23.51.51.51s.51-.23.51-.51v-3.957h3.957c.28 0 .51-.23.51-.51z"/>
-                                            </svg>
-                                            WhatsApp
-                                        </a>
-                                        <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">
-                                            <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
-                                                <path d="M2.003 5.884l7.859 6.273c.513.41 1.258.41 1.77 0l7.859-6.273a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418zM.002 8.773c0-.18.067-.348.18-.48l3.41-3.155c.134-.123.32-.19.515-.19h15.786c.195 0 .38.067.515.19l3.41 3.155c.113.132.18.3.18.48v11.758a.952.952 0 01-.952.952H.954a.952.952 0 01-.952-.952V8.773zm1.904 2.158l.006.005L12 16.57l9.904-5.634.006-.005a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418z"/>
-                                            </svg>
-                                            Email
-                                        </a>
+                                    <div class="border-t-2 border-green-300 mt-4 pt-2 flex justify-between font-bold text-lg">
+                                        <span>Total Annual Tax Payable:</span>
+                                        <span class="text-red-600">${formatCurrency(R.taxPayable)}</span>
                                     </div>
                                 </div>
                             </div>
+
+                            <div class="bg-yellow-50 rounded-lg p-6">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2 border-yellow-200">4. Annual Take-Home Pay Computation</h3>
+                                <div class="space-y-2 text-gray-700">
+                                    <div class="flex justify-between"><span>Gross Annual Income:</span><span>${formatCurrency(R.grossIncome)}</span></div>
+                                    <div class="flex justify-between"><span>(-) Total Eligible Deductions & Relief:</span><span class="text-red-600">(${formatCurrency(R.totalDeductions)})</span></div>
+                                    <div class="flex justify-between font-medium border-t border-dashed pt-1"><span>Income Before Tax:</span><span>${formatCurrency(NetAnnualIncome)}</span></div>
+                                    <div class="flex justify-between"><span>(-) Total Annual Tax Payable:</span><span class="text-red-600">(${formatCurrency(R.taxPayable)})</span></div>
+                                    <div class="border-t-2 border-yellow-300 mt-2 pt-2 flex justify-between font-bold text-xl">
+                                        <span>NET ANNUAL TAKE-HOME PAY:</span>
+                                        <span class="text-green-700">${formatCurrency(FinalAnnualTakeHome)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bg-indigo-50 rounded-lg p-6">
+                                <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2 border-indigo-200">5. Monthly Equivalents & 6. Effective Tax Rate</h3>
+                                <div class="space-y-2 text-gray-700">
+                                    <p class="font-medium text-lg text-gray-800 mb-2">Monthly Breakdown:</p>
+                                    <div class="flex justify-between"><span>Gross Monthly Salary:</span><span>${formatCurrency(R.grossMonthly)}</span></div>
+                                    <div class="flex justify-between"><span>Monthly Eligible Deductions:</span><span>${formatCurrency(R.monthlyDeductions)}</span></div>
+                                    <div class="flex justify-between"><span>Monthly Tax Due:</span><span class="text-red-600">${formatCurrency(R.monthlyTax)}</span></div>
+                                    <div class="border-t-2 border-indigo-300 mt-2 pt-2 flex justify-between font-bold text-lg">
+                                        <span>Worker's Monthly Take-Home Pay:</span>
+                                        <span class="text-green-700">${formatCurrency(R.monthlyTakeHome)}</span>
+                                    </div>
+                                </div>
+                                <div class="border-t border-indigo-300 mt-4 pt-4">
+                                    <p class="font-medium text-lg text-gray-800 mb-2">6. Effective Tax Rate:</p>
+                                    <div class="bg-indigo-100 rounded p-3 flex justify-between font-bold text-xl">
+                                        <span>Effective Tax Rate (Annual Tax / Annual Gross):</span>
+                                        <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+
+                            <div class="bg-gray-100 rounded-lg border-l-4 border-gray-400 p-4 text-sm text-gray-700">
+                                <p class="font-semibold mb-3 text-center">Contact for Professional Consultation:</p>
+                                <div class="flex space-x-6 justify-center">
+                                    <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">
+                                        <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M12.036 1c-6.07 0-11 4.93-11 11s4.93 11 11 11 11-4.93 11-11-4.93-11-11-11zm0 19.98c-5.46 0-9.946-4.486-9.946-9.946s4.486-9.946 9.946-9.946 9.946 4.486 9.946 9.946-4.486 9.946-9.946 9.946zm2.355-14.823c-.636-.217-3.754-1.802-3.837-1.834-.136-.054-.277-.08-.415-.08-.27 0-.498.05-.724.168-.225.12-.395.32-.51.528-.117.208-.407.97-.478 1.11-.122.215-.246.39-.335.485-.09.096-.184.18-.328.334-.144.155-.308.358-.456.556-.148.197-.248.33-.497.55-.248.22-.507.45-.718.665-.21.215-.34.39-.51.65-.17.26-.35.53-.49.807-.142.277-.197.545-.11.83.085.286.27.48.56.702.29.223.58.455.85.67.27.216.52.395.735.53.21.135.41.24.63.35.22.11.41.17.61.18.2.006.404.004.615-.06.21-.064.39-.18.57-.315.18-.137.33-.31.477-.505.148-.194.27-.37.36-.53.095-.16.17-.286.255-.42.083-.134.19-.31.33-.52.14-.208.24-.31.42-.42.18-.11.37-.15.54-.047.17.106.94.977 1.054 1.25.115.27.228.43.43.51.206.085.39.098.57.065.18-.035.41-.12.63-.228.22-.11.4-.26.57-.424.17-.165.29-.307.39-.47.1-.16.17-.307.245-.443.076-.137.15-.264.22-.38.07-.116.13-.23.18-.33.05-.1.08-.18.12-.27.04-.087.06-.17.07-.26.014-.088.014-.17 0-.25zm-2.355 5.564c-.03 0-.06 0-.09 0s-.06-.01-.09-.01c-.13-.01-.26-.03-.39-.06-.13-.03-.26-.06-.39-.11-.12-.04-.24-.09-.36-.16-.12-.06-.24-.13-.36-.21-.11-.08-.21-.17-.31-.26-.1-.09-.2-.19-.3-.31-.1-.11-.19-.23-.28-.36-.08-.13-.15-.27-.22-.42-.06-.15-.12-.31-.17-.48-.04-.17-.08-.34-.11-.52-.02-.18-.04-.36-.04-.55s0-.38.01-.58c0-.2.01-.39.04-.59.02-.2.06-.39.11-.57.04-.18.09-.37.16-.54.07-.17.16-.33.26-.49.1-.15.22-.29.35-.43.13-.13.27-.26.42-.39.15-.12.31-.23.49-.33.18-.1.37-.18.57-.24.2-.06.4-.1.6-.12.2-.02.4-.02.6-.02.2 0 .4.004.6.012.2.01.4.03.6.06.2.03.4.07.6.13.2.05.4.12.6.2.2.08.4.17.6.28.2.1.4.23.6.36.2.13.3.26.4.39.1.13.2.27.3.42.08.15.15.3.2.47.05.17.09.35.12.54.02.19.04.38.04.58 0 .2-.007.4-.015.6-.01.2-.03.4-.06.6s-.06.4-.12.6c-.05.2-.12.4-.2.6-.08.2-.17.3-.28.5zm1.5-3.5c-.06-.06-.12-.13-.18-.21-.15-.18-.32-.34-.51-.48-.19-.14-.38-.26-.59-.36-.2-.09-.41-.17-.62-.22-.22-.05-.44-.09-.67-.1-.23-.02-.45-.02-.68 0-.23.01-.46.04-.69.09-.23.05-.46.12-.68.22-.22.1-.42.23-.62.38-.2.15-.37.33-.53.53-.16.2-.3.42-.42.66-.12.23-.2.48-.26.74-.06.26-.09.53-.09.8s.03.54.09.8c.06.26.15.5.26.74.12.24.26.46.42.66.16.2.33.37.53.53.2.16.42.3.66.42.23.12.48.2.74.26.26.06.53.09.8.09s.54-.03.8-.09c.26-.06.5-.15.74-.26.24-.12.46-.26.66-.42.2-.16.37-.33.53-.53.16-.2.3-.42.42-.66.12-.23.2-.48.26-.74.06-.26.09-.53.09-.8s-.03-.54-.09-.8c-.06-.26-.15-.5-.26-.74-.12-.24-.26-.46-.42-.66z"/>
+                                            <path d="M16 12.012c0-.28-.23-.51-.51-.51h-3.957v-3.957c0-.28-.23-.51-.51-.51s-.51.23-.51.51v3.957h-3.957c-.28 0-.51.23-.51.51s.23.51.51.51h3.957v3.957c0 .28.23.51.51.51s.51-.23.51-.51v-3.957h3.957c.28 0 .51-.23.51-.51z"/>
+                                        </svg>
+                                        WhatsApp
+                                    </a>
+                                    <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">
+                                        <svg class="w-6 h-6 mr-1" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M2.003 5.884l7.859 6.273c.513.41 1.258.41 1.77 0l7.859-6.273a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418zM.002 8.773c0-.18.067-.348.18-.48l3.41-3.155c.134-.123.32-.19.515-.19h15.786c.195 0 .38.067.515.19l3.41 3.155c.113.132.18.3.18.48v11.758a.952.952 0 01-.952.952H.954a.952.952 0 01-.952-.952V8.773zm1.904 2.158l.006.005L12 16.57l9.904-5.634.006-.005a.855.855 0 00-.773-.418H2.776a.855.855 0 00-.773.418z"/>
+                                        </svg>
+                                        Email
+                                    </a>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-red-50 border-l-4 border-red-400 p-4 text-sm text-gray-700">
+                                <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
+                                <p class="mb-1">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
+                            </div>
+
+
                             <button onclick="resetCalculator()" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
