@@ -167,17 +167,29 @@
             const content = document.getElementById(`content-${id}`);
             const icon = document.getElementById(`icon-${id}`);
 
+            // If the element doesn't exist, exit
+            if (!content || !icon) return;
+            
+            // Check if this is a nested accordion for bulk view
+            const isBulkNested = id.startsWith('bulk-');
+
             if (content.classList.contains('expanded')) {
                 content.classList.remove('expanded');
                 icon.classList.remove('rotate-90');
             } else {
-                // Collapse all others before expanding this one
-                document.querySelectorAll('.accordion-content.expanded').forEach(c => {
-                    c.classList.remove('expanded');
-                });
-                document.querySelectorAll('.accordion-header svg.rotate-90').forEach(i => {
-                    i.classList.remove('rotate-90');
-                });
+                // Collapse all others *only* if it's the main individual view (to keep it clean)
+                if (!isBulkNested) {
+                    document.querySelectorAll('.accordion-content.expanded').forEach(c => {
+                        c.classList.remove('expanded');
+                    });
+                    document.querySelectorAll('.accordion-header svg.rotate-90').forEach(i => {
+                        // Ensure we only collapse the correct icons
+                        if (!i.id.startsWith('icon-bulk-')) { 
+                             i.classList.remove('rotate-90');
+                        }
+                    });
+                }
+                
 
                 content.classList.add('expanded');
                 icon.classList.add('rotate-90');
@@ -703,7 +715,7 @@
             `;
         }
 
-        // CORRECTED FUNCTION SIGNATURE TO ACCEPT DATA EXPLICITLY
+        // Renders the full result view for the Individual tab.
         function renderResult(R, isBulkView) {
             
             // 1. Gross Annual Salary Breakdown
@@ -804,28 +816,159 @@
                                 <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
                             </div>
 
-                            <div class="pt-4">
-                                <div class="bg-gray-100 rounded-lg border-l-4 border-gray-400 p-4 text-sm text-gray-700">
-                                    <p class="font-semibold mb-3 text-center">Contact for Professional Consultation:</p>
-                                    <div class="flex space-x-6 justify-center">
-                                        <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">WhatsApp</a>
-                                        <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">Email</a>
+                            ${!isBulkView ? `
+                                <div class="pt-4">
+                                    <div class="bg-gray-100 rounded-lg border-l-4 border-gray-400 p-4 text-sm text-gray-700">
+                                        <p class="font-semibold mb-3 text-center">Contact for Professional Consultation:</p>
+                                        <div class="flex space-x-6 justify-center">
+                                            <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">WhatsApp</a>
+                                            <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">Email</a>
+                                        </div>
+                                    </div>
+                                    <div class="bg-red-50 border-l-4 border-red-400 p-4 text-sm text-gray-700 mt-4">
+                                        <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
+                                        <p class="mb-1">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
                                     </div>
                                 </div>
-                                <div class="bg-red-50 border-l-4 border-red-400 p-4 text-sm text-gray-700 mt-4">
-                                    <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
-                                    <p class="mb-1">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
-                                </div>
-                            </div>
 
 
-                            <button onclick="${isBulkView ? 'window.close();' : 'resetCalculator();'}" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
-                                </svg>
-                                ${isBulkView ? 'Close Individual Breakdown' : 'Start New Calculation'}
-                            </button>
+                                <button onclick="resetCalculator();" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                                    </svg>
+                                    Start New Calculation
+                                </button>
+                            ` : ''}
                         </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // NEW: Function to render the detailed breakdown content for a single bulk employee (inline)
+        function renderBulkDetailContent(R, index) {
+            
+            // 1. Gross Annual Salary Breakdown
+            const grossBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    ${renderAnnualMonthlyRow('Basic Salary', R.basicSalary, R.basicSalary / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Housing Allowance', R.housingAllowance, R.housingAllowance / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Transportation Allowance', R.transportAllowance, R.transportAllowance / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Other Allowances', R.otherAllowances, R.otherAllowances / MONTHS_IN_YEAR)}
+                </div>
+            `;
+            
+            // 2. Statutory Cash Deductions Breakdown
+            const statutoryDeductionsBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
+                    <div class="border-t border-dashed border-gray-300 my-3"></div>
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.statutoryDeductions, R.monthlyDeductions, true)}
+                </div>
+            `;
+            
+            // 3. Tax Reliefs Breakdown
+            const totalReliefs = R.totalTaxDeductions - R.statutoryDeductions;
+            const reliefsBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    <p class="text-sm text-gray-500 mb-2">These reduce Taxable Income (used for PAYE calculation):</p>
+                    ${renderAnnualMonthlyRow(`Rent Relief (Max ${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')})`, R.rentRelief, R.rentRelief / MONTHS_IN_YEAR)}
+                    <div class="border-t border-dashed border-gray-300 my-3"></div>
+                    ${renderAnnualMonthlyRow('Total Tax Deductions & Reliefs', R.totalTaxDeductions, R.totalTaxDeductions / MONTHS_IN_YEAR, true)}
+                    <p class="mt-2 text-xs text-red-600">Note: Only Statutory Cash Deductions (above) are removed from the paycheck before PAYE tax.</p>
+                </div>
+            `;
+
+
+            // 4. PAYE Tax Progressive Computation Breakdown
+            const payeBreakdown = `
+                <div class="space-y-3 text-gray-700">
+                    <div class="bg-yellow-100 rounded p-3 flex justify-between font-semibold text-base">
+                        <span>Taxable Income (Gross - Total Tax Deductions):</span>
+                        <span class="text-yellow-700">${formatCurrency(R.taxableIncome)}</span>
+                    </div>
+                    
+                    <p class="font-medium text-sm text-gray-600 mb-2">PAYE Tax Bands Breakdown:</p>
+                    ${R.bandDetails.map(band => `
+                        <div class="flex justify-between text-sm bg-white rounded p-2 border-l-2 border-green-300">
+                            <span class="font-medium text-gray-700">
+                                ${band.name} @ ${(band.rate * 100).toFixed(0)}%
+                            </span>
+                            <span class="font-semibold text-green-700">
+                                ${formatCurrency(band.taxInBand)}
+                            </span>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            
+            // 5. Net Salary Computation Breakdown
+            const netSalaryBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
+                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions', R.statutoryDeductions * -1, R.monthlyDeductions * -1)}
+                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
+                </div>
+            `;
+            
+            // Inline Accordion Item Helper (Simplified for bulk view)
+            function renderInlineAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false) {
+                const annualDisplay = formatCurrency(totalAnnualAmount);
+                const monthlyDisplay = formatCurrency(totalAnnualAmount / MONTHS_IN_YEAR);
+                const titleColor = isFinal ? 'text-lg text-green-700' : 'text-base text-gray-800';
+                const bgColor = isFinal ? 'bg-green-100 hover:bg-green-200' : `bg-${colorClass}-50 hover:bg-${colorClass}-100`;
+
+                return `
+                    <div class="rounded-md shadow-sm overflow-hidden border border-${colorClass}-200">
+                        <div id="header-${id}" class="accordion-header ${bgColor} p-3 flex justify-between items-center" onclick="toggleAccordion('${id}')">
+                            <h4 class="${titleColor} font-semibold flex items-center">
+                                ${title}
+                                <svg id="icon-${id}" class="w-4 h-4 ml-2 text-gray-600 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                            </h4>
+                            <div class="flex flex-col text-right">
+                                <span class="${titleColor} font-bold text-sm">Annual: ${annualDisplay}</span>
+                                <span class="${titleColor} font-bold text-xs text-gray-600">Monthly: ${monthlyDisplay}</span>
+                            </div>
+                        </div>
+
+                        <div id="content-${id}" class="accordion-content bg-white p-0">
+                            <div class="p-4 border-t border-${colorClass}-200">
+                                <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
+                                    <span class="w-1/2">Element</span>
+                                    <span class="w-1/4 text-right">Annual Figure</span>
+                                    <span class="w-1/4 text-right">Monthly Figure</span>
+                                </div>
+                                ${breakdownHtml}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            return `
+                <div class="p-6 bg-gray-50 space-y-4 border-t border-gray-200">
+                    <h3 class="text-xl font-bold text-gray-700">Detailed Breakdown for ${R.staffName || 'Employee'}</h3>
+                    
+                    ${renderInlineAccordionItem(`bulk-gross-${index}`, '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-statutory-${index}`, '2. Statutory Cash Deductions', R.statutoryDeductions, 'gray', statutoryDeductionsBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-reliefs-${index}`, '3. Tax Reliefs', totalReliefs, 'orange', reliefsBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-paye-${index}`, '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-netsalary-${index}`, '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true)}
+
+                    <div class="bg-indigo-100 rounded-lg p-3 flex justify-between font-bold text-base border border-indigo-200">
+                        <span>Effective Tax Rate:</span>
+                        <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
+                    </div>
+
+                    <div class="bg-red-50 border-l-4 border-red-400 p-3 text-xs text-gray-700 mt-4">
+                        <p class="font-semibold mb-1">⚠️ Disclaimer:</p>
+                        <p>This is an estimation. Consult a certified tax professional for official advice.</p>
                     </div>
                 </div>
             `;
@@ -984,56 +1127,48 @@
              const totalMonthlyPAYE = bulkResult.reduce((sum, res) => sum + res.monthlyPAYE, 0);
              const totalMonthlyNetSalary = bulkResult.reduce((sum, res) => sum + res.monthlyNetSalary, 0);
 
-             // Function to handle row click and display individual result in a new window/tab
-             window.viewIndividualResult = (index) => {
-                 const resultData = bulkResult[index];
+             // New function to handle the detail row toggle
+             window.toggleDetailRow = (index) => {
+                 const detailRow = document.getElementById('detail-row-' + index);
+                 const toggleIcon = document.getElementById('toggle-icon-' + index);
                  
-                 // NOW CORRECTLY CALLING renderResult with data and the isBulkView=true flag
-                 const resultHTML = renderResult(resultData, true); 
-                 const newWindow = window.open("", "_blank");
+                 // If the selected row is currently hidden, expand it
+                 if (detailRow.classList.contains('hidden')) {
+                    // 1. Hide all other detail rows (for a cleaner UX)
+                    document.querySelectorAll('[id^="detail-row-"]').forEach(row => row.classList.add('hidden'));
+                    document.querySelectorAll('[id^="toggle-icon-"]').forEach(icon => icon.classList.remove('rotate-90'));
+                    document.querySelectorAll('.accordion-content.expanded').forEach(c => {
+                        // Collapse all nested accordions in other rows
+                        if (c.id.startsWith('content-bulk-')) {
+                            c.classList.remove('expanded');
+                        }
+                    });
+                    document.querySelectorAll('.accordion-header svg.rotate-90').forEach(i => {
+                        // Collapse all nested icons in other rows
+                        if (i.id.startsWith('icon-bulk-')) {
+                            i.classList.remove('rotate-90');
+                        }
+                    });
 
-                 // CRITICAL FIX: Check if the new window was successfully opened (not blocked)
-                 if (!newWindow) {
-                    alert("A pop-up blocker prevented the individual breakdown from opening. Please allow pop-ups for this site and try again.");
-                    return; 
+                    // 2. Show the selected detail row
+                    detailRow.classList.remove('hidden');
+                    toggleIcon.classList.add('rotate-90');
+
+                    // 3. Auto-expand the first (Gross Income) section of the new detail row
+                    setTimeout(() => {
+                        const content = document.getElementById(`content-bulk-gross-${index}`);
+                        const icon = document.getElementById(`icon-bulk-gross-${index}`);
+                        if(content && icon) {
+                            content.classList.add('expanded');
+                            icon.classList.add('rotate-90');
+                        }
+                    }, 50);
+
+                 } else {
+                    // If the selected row is currently visible, hide it
+                    detailRow.classList.add('hidden');
+                    toggleIcon.classList.remove('rotate-90');
                  }
-                 
-                 // Inject necessary styles and script environment into the new window
-                 newWindow.document.write(`
-                    <!DOCTYPE html>
-                    <html lang="en">
-                    <head>
-                        <meta charset="UTF-8">
-                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                        <title>PIT Breakdown for ${resultData.staffName || 'Employee'}</title>
-                        <script src="https://cdn.tailwindcss.com"></script>
-                        <style>
-                            ${document.querySelector('style').innerHTML} 
-                            body { background: #f0fdf4; }
-                        </style>
-                    </head>
-                    <body class="p-4">
-                        <div id="app">${resultHTML}</div>
-                        <script>
-                            // Re-expose necessary functions in the new window context
-                            const MONTHS_IN_YEAR = ${MONTHS_IN_YEAR};
-                            const RENT_RELIEF_CAP = ${RENT_RELIEF_CAP};
-                            const PIT_BRACKETS = ${JSON.stringify(PIT_BRACKETS)};
-                            const TAX_RATE_HIGHEST = ${TAX_RATE_HIGHEST};
-                            
-                            const formatCurrency = ${formatCurrency.toString()};
-                            const formatPercentage = ${formatPercentage.toString()};
-                            const toggleAccordion = ${toggleAccordion.toString()};
-                            const renderAnnualMonthlyRow = ${renderAnnualMonthlyRow.toString()};
-                            
-                            // Manually expand the first accordion item (Gross Income) for immediate viewing
-                            document.getElementById('content-gross').classList.add('expanded');
-                            document.getElementById('icon-gross').classList.add('rotate-90');
-                        </script>
-                    </body>
-                    </html>
-                 `);
-                 newWindow.document.close();
              }
 
              return `
@@ -1041,7 +1176,7 @@
                     <div class="bg-white rounded-2xl shadow-xl p-8">
                         <div class="text-center mb-6">
                             <h2 class="text-3xl font-bold text-gray-800">Bulk Calculation Complete</h2>
-                            <p class="text-gray-600 mt-2">Processed ${bulkResult.length} records. Click any row for a detailed breakdown in a **new window**.</p>
+                            <p class="text-gray-600 mt-2">Processed ${bulkResult.length} records. Click any row for a detailed breakdown **below the row**.</p>
                         </div>
 
                         <div class="space-y-6">
@@ -1078,11 +1213,12 @@
                                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual Gross</th>
                                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual PAYE</th>
                                             <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Net Salary</th>
+                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
                                         </tr>
                                     </thead>
                                     <tbody class="bg-white divide-y divide-gray-200">
                                         ${bulkResult.map((res, index) => `
-                                            <tr class="hover:bg-green-50 cursor-pointer transition-colors" onclick="viewIndividualResult(${index})">
+                                            <tr class="hover:bg-green-50 cursor-pointer transition-colors" onclick="toggleDetailRow(${index})">
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                                                     ${res.staffName || 'N/A'} <br>
                                                     <span class="text-xs text-gray-500">${res.staffId || 'No ID'}</span>
@@ -1090,6 +1226,16 @@
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${formatCurrency(res.grossIncome)}</td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-semibold text-right">${formatCurrency(res.annualPAYE)}</td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-green-700 font-bold text-right">${formatCurrency(res.monthlyNetSalary)}</td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-right">
+                                                    <svg id="toggle-icon-${index}" class="w-4 h-4 ml-auto text-gray-500 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                                    </svg>
+                                                </td>
+                                            </tr>
+                                            <tr id="detail-row-${index}" class="hidden">
+                                                <td colspan="5" class="p-0 border-t border-gray-200">
+                                                    ${renderBulkDetailContent(res, index)}
+                                                </td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
