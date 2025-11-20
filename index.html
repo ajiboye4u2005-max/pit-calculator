@@ -78,7 +78,7 @@
             "Annual Rent Paid"
         ];
         
-        // Output Headers (Input and Calculated with Formulas) - Total 23 columns
+        // Output Headers (Input and Calculated with Formulas) - Total 24 columns
         const OUTPUT_HEADERS = [
             // HR Input columns (0, 1, 2) - Personal Data
             "Name of Staff", "Staff ID", "Grade of Staff", 
@@ -90,16 +90,19 @@
             "NHIS Contribution", "Loan Interest", "Life Insurance Premium",
             // Computed Deductions (11, 12) - Computed Data
             "NHF Contribution (=2.5%*Basic Salary)", 
-            "Pension Contribution (=8%*(Basic+Housing+Trans))", // <<< UPDATED FORMULA DESCRIPTION
+            "Pension Contribution (=8%*(Basic+Housing+Trans))", 
             // Remaining Deduction Input (13) - Input Data
             "Annual Rent Paid",
             // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
-            "Total Statutory Deductions", "Rent Relief", "Total Deductions", "Taxable Income",
+            "Total Statutory Cash Deductions", // (14) - CASH DEDUCTION (used for take-home pay)
+            "Rent Relief", // (15)
+            "Total Deductions For Taxable Income (=Statutory+Relief)", // (16) - TAX DEDUCTION (used for taxable income)
+            "Taxable Income", // (17)
             "Annual Tax Payable", // (18)
             
-            // --- NEW MONTHLY / RATE HEADERS (19-22) ---
+            // --- MONTHLY / RATE HEADERS (19-23) ---
             "Gross Monthly Salary (=Gross Annual / 12)", // (19)
-            "Monthly Eligible Deductions (=Total Deductions / 12)", // (20)
+            "Monthly Cash Deductions (=Statutory Cash / 12)", // (20)
             "Monthly Tax Due (=Annual Tax / 12)", // (21)
             "Worker's Take-Home Pay (Monthly)", // (22)
             "Effective Tax Rate (Annual Tax / Annual Gross)", // (23)
@@ -215,19 +218,22 @@
             const pensionBase = basicSalary + housingAllowance + transportAllowance;
             const computedPension = pensionBase * PENSION_RATE; 
 
-            // 3. Calculate Total Statutory Deductions (computed + input ones)
-            const statutoryDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
+            // 3. Calculate Statutory Deductions (Cash Outflow)
+            // This is the total amount that is actually deducted from the payroll before tax is calculated.
+            const statutoryCashDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
             
-            // 4. Calculate Reliefs and Taxable Income (unchanged logic)
+            // 4. Calculate Reliefs and Taxable Income
             const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
             const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
-            const totalDeductions = statutoryDeductions + rentRelief;
             
-            // 5. Calculate Taxable Income (The new formula should be Gross - totalDeductions)
-            const taxableIncome = Math.max(0, grossIncome - totalDeductions);
+            // Total Deductions FOR TAX PURPOSES (Cash Deductions + Reliefs)
+            const totalTaxDeductions = statutoryCashDeductions + rentRelief;
             
-            // Calculate Annual Net Income (Before Tax) - This is for the "Take-home pay" section
-            const annualIncomeBeforeTax = grossIncome - totalDeductions;
+            // 5. Calculate Taxable Income
+            const taxableIncome = Math.max(0, grossIncome - totalTaxDeductions);
+            
+            // Calculate Annual Income Before Tax (CASH FLOW: Gross Income - Cash Deductions)
+            const annualIncomeBeforeTaxCash = grossIncome - statutoryCashDeductions;
 
 
             let remainingTaxable = taxableIncome;
@@ -263,14 +269,16 @@
                 });
             }
             
-            // Calculate Net Annual Take-Home Pay (After all deductions and tax)
-            const annualTakeHome = grossIncome - totalDeductions - taxPayable;
+            // Calculate Net Annual Take-Home Pay (Cash Flow: Gross - Cash Deductions - Annual Tax)
+            // FIX: Use statutoryCashDeductions (cash deductions) instead of totalTaxDeductions
+            const annualTakeHome = grossIncome - statutoryCashDeductions - taxPayable;
             
-            // --- NEW MONTHLY CALCULATIONS ---
+            // --- MONTHLY CALCULATIONS ---
             const grossMonthly = grossIncome / MONTHS_IN_YEAR;
-            const monthlyDeductions = totalDeductions / MONTHS_IN_YEAR;
+            // Monthly Cash Deductions
+            const monthlyCashDeductions = statutoryCashDeductions / MONTHS_IN_YEAR; 
             const monthlyTax = taxPayable / MONTHS_IN_YEAR;
-            const monthlyTakeHome = annualTakeHome / MONTHS_IN_YEAR; // monthlyTakeHome is also grossMonthly - monthlyDeductions - monthlyTax
+            const monthlyTakeHome = annualTakeHome / MONTHS_IN_YEAR; // This is now correctly calculated based on annualTakeHome
             const effectiveTaxRate = grossIncome > 0 ? taxPayable / grossIncome : 0;
 
             return {
@@ -279,17 +287,20 @@
                 grossIncome, // Computed field
                 computedNhf, // Computed field
                 computedPension, // Computed field
-                statutoryDeductions,
+                
+                // Key Calculation Results
+                statutoryDeductions: statutoryCashDeductions, // (The actual CASH deductions)
                 rentRelief,
-                totalDeductions,
-                annualIncomeBeforeTax, // New computed field
+                totalTaxDeductions: totalTaxDeductions, // Total deductions for TAXABLE INCOME calculation
+                
+                annualIncomeBeforeTaxCash, // Cash Flow before Tax
                 taxableIncome,
                 taxPayable,
-                annualTakeHome, // New computed field
+                annualTakeHome, 
                 
-                // New Fields
+                // Monthly Fields
                 grossMonthly,
-                monthlyDeductions, // New computed field
+                monthlyDeductions: monthlyCashDeductions, // (The actual CASH monthly deductions)
                 monthlyTax,
                 monthlyTakeHome,
                 effectiveTaxRate,
@@ -366,12 +377,7 @@
         }
 
         // --- BULK UPLOAD LOGIC ---
-
-        // (generateAndDownloadTemplate, handleFileSelect, downloadBulkResult, resetBulkCalculator - unchanged from previous version as they handle file I/O)
         
-        // ... (Paste generateAndDownloadTemplate, handleFileSelect, downloadBulkResult, resetBulkCalculator here if not using tool)
-        // Note: For brevity in the thought process, assuming the utility functions are present. They were in the previous output.
-
         /**
          * Generates and downloads an Excel template with the required column headers.
          */
@@ -449,10 +455,8 @@
             reader.readAsArrayBuffer(file);
         }
         
-        // (applyAestheticFormatting function is quite large and not strictly necessary for UI, but needed for file output. Skipping for brevity, assuming its presence.)
         function applyAestheticFormatting(ws, numRows) {
-            // ... (Full function from previous turn)
-             const range = XLSX.utils.decode_range(ws['!ref']);
+            const range = XLSX.utils.decode_range(ws['!ref']);
             const headerRow = range.s.r; // Typically 0
 
             const THIN_BORDER = { style: "thin", color: { auto: 1 } };
@@ -465,8 +469,8 @@
             const COL_FINANCIAL_START = 3; 
             const COL_TAXABLE_INCOME = 17; 
             const COL_TAX_PAYABLE = 18; 
-            const COL_MONTHLY_TAKE_HOME = 21; 
-            const COL_RATE = 22; 
+            const COL_MONTHLY_TAKE_HOME = 22; // UPDATED INDEX (was 21)
+            const COL_RATE = 23; // UPDATED INDEX (was 22)
             
             // 1. Currency/Percentage Format
             for (let R = headerRow + 1; R <= range.e.r; ++R) {
@@ -526,7 +530,7 @@
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
                 });
 
-                // Apply output background to all computed deduction/result columns (Cols 7, 11, 12, 14 to 22)
+                // Apply output background to all computed deduction/result columns (Cols 7, 11, 12, 14 to 23)
                 for (let C = 7; C <= range.e.c; ++C) {
                     // Skip input columns 8, 9, 10, 13, which were already marked as input
                     if ([8, 9, 10, 13].includes(C)) continue; 
@@ -543,7 +547,7 @@
                 ws[taxableIncomeAddr].s = { ...ws[taxableIncomeAddr].s, ...finalResultStyle };
 
                 let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_TAX_PAYABLE, r: R });
-                if (!ws[taxPayableAddr].s) ws[cellAddress].s = {};
+                if (!ws[taxPayableAddr].s) ws[taxPayableAddr].s = {};
                 ws[taxPayableAddr].s = { ...ws[taxPayableAddr].s, ...finalResultStyle };
 
                 let takeHomeAddr = XLSX.utils.encode_cell({ c: COL_MONTHLY_TAKE_HOME, r: R });
@@ -607,18 +611,18 @@
                 // Remaining Deduction Input (13)
                 res.annualRent,
                 // Calculated columns (14, 15, 16, 17, 18)
-                res.statutoryDeductions,
-                res.rentRelief,
-                res.totalDeductions,
-                res.taxableIncome,
-                res.taxPayable,
+                res.statutoryDeductions, // (14) - Cash Deductions (Correct)
+                res.rentRelief, // (15) (Correct)
+                res.totalTaxDeductions, // (16) - Total Deductions FOR TAXABLE INCOME (statutory + relief)
+                res.taxableIncome, // (17)
+                res.taxPayable, // (18)
                 
                 // --- NEW FIELDS (19-23) ---
-                res.grossMonthly,
-                res.monthlyDeductions,
-                res.monthlyTax,
-                res.monthlyTakeHome,
-                res.effectiveTaxRate // Percentage, will be formatted in applyAestheticFormatting
+                res.grossMonthly, // (19)
+                res.monthlyDeductions, // (20) - Monthly Cash Deductions
+                res.monthlyTax, // (21)
+                res.monthlyTakeHome, // (22) - Monthly Cash Take-Home Pay (FIXED)
+                res.effectiveTaxRate // (23)
             ]);
 
             const sheetData = [OUTPUT_HEADERS, ...outputData];
@@ -695,8 +699,10 @@
         function renderResult() {
             const R = result; // Shorthand for result object
 
-            const NetAnnualIncome = R.grossIncome - R.totalDeductions;
-            const FinalAnnualTakeHome = R.annualTakeHome; // R.grossIncome - R.totalDeductions - R.taxPayable;
+            // R.totalTaxDeductions: Statutory Deductions + Rent Relief (Used for Taxable Income)
+            // R.statutoryDeductions: Statutory Deductions (Cash Outflow)
+            // R.annualIncomeBeforeTaxCash: Gross Income - Statutory Deductions (Cash Flow Before Tax)
+            // R.annualTakeHome: Gross Income - Statutory Deductions - Tax Payable (Final Cash Flow)
 
             // 1. Gross Annual Salary Breakdown
             const grossBreakdown = `
@@ -711,15 +717,17 @@
             // 2. Annual Eligible Deductions Breakdown
             const deductionsBreakdown = `
                 <div class="space-y-2 text-gray-700">
-                    <p class="font-medium text-sm text-gray-600 mb-2">Statutory Contributions (Input & Computed):</p>
+                    <p class="font-medium text-sm text-gray-600 mb-2">Statutory Contributions (Cash Deductions):</p>
                     <div class="flex justify-between"><span>NHF Contribution (2.5% of Basic):</span><span>${formatCurrency(R.computedNhf)}</span></div>
                     <div class="flex justify-between"><span>Pension Contribution (8% of Pensionable Emoluments):</span><span>${formatCurrency(R.computedPension)}</span></div>
                     <div class="flex justify-between"><span>NHIS Contribution (Input):</span><span>${formatCurrency(R.nhis)}</span></div>
                     <div class="flex justify-between"><span>Loan Interest Paid (Input):</span><span>${formatCurrency(R.loanInterest)}</span></div>
                     <div class="flex justify-between"><span>Life Insurance Premium (Input):</span><span>${formatCurrency(R.lifeInsurance)}</span></div>
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    <p class="font-medium text-sm text-gray-600 mb-2">Relief:</p>
+                    <p class="font-medium text-sm text-gray-600 mb-2">Relief (Non-Cash Deduction, used for tax calculation only):</p>
                     <div class="flex justify-between"><span>Rent Relief (20% of Annual Rent, max ₦${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')}):</span><span>${formatCurrency(R.rentRelief)}</span></div>
+                    <div class="border-t border-dashed border-gray-300 my-3"></div>
+                    <div class="flex justify-between font-semibold"><span>Total Deductions for Taxable Income:</span><span>${formatCurrency(R.totalTaxDeductions)}</span></div>
                 </div>
             `;
 
@@ -727,7 +735,7 @@
             const taxBreakdown = `
                 <div class="space-y-3 text-gray-700">
                     <div class="bg-yellow-100 rounded p-3 flex justify-between font-semibold text-base">
-                        <span>Taxable Income (Gross - Total Deductions):</span>
+                        <span>Taxable Income (Gross - Total Tax Deductions):</span>
                         <span class="text-yellow-700">${formatCurrency(R.taxableIncome)}</span>
                     </div>
                     
@@ -749,8 +757,8 @@
             const takeHomeBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     <div class="flex justify-between"><span>Gross Annual Income:</span><span>${formatCurrency(R.grossIncome)}</span></div>
-                    <div class="flex justify-between"><span>(-) Total Eligible Deductions & Relief:</span><span class="text-red-600">(${formatCurrency(R.totalDeductions)})</span></div>
-                    <div class="flex justify-between font-medium border-t border-dashed pt-1"><span>Income Before Tax:</span><span>${formatCurrency(NetAnnualIncome)}</span></div>
+                    <div class="flex justify-between"><span>(-) Total Statutory Cash Deductions:</span><span class="text-red-600">(${formatCurrency(R.statutoryDeductions)})</span></div>
+                    <div class="flex justify-between font-medium border-t border-dashed pt-1"><span>Income Before Tax (Cash Flow):</span><span>${formatCurrency(R.annualIncomeBeforeTaxCash)}</span></div>
                     <div class="flex justify-between"><span>(-) Total Annual Tax Payable:</span><span class="text-red-600">(${formatCurrency(R.taxPayable)})</span></div>
                 </div>
             `;
@@ -759,7 +767,7 @@
             const monthlyBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     <div class="flex justify-between"><span>Gross Monthly Salary:</span><span>${formatCurrency(R.grossMonthly)}</span></div>
-                    <div class="flex justify-between"><span>Monthly Eligible Deductions:</span><span>${formatCurrency(R.monthlyDeductions)}</span></div>
+                    <div class="flex justify-between"><span>Monthly Cash Deductions:</span><span>${formatCurrency(R.monthlyDeductions)}</span></div>
                     <div class="flex justify-between"><span>Monthly Tax Due:</span><span class="text-red-600">${formatCurrency(R.monthlyTax)}</span></div>
                 </div>
             `;
@@ -778,13 +786,13 @@
                             
                             ${renderAccordionItem('gross', '1. Gross Annual Salary', R.grossIncome, 'blue', grossBreakdown)}
 
-                            ${renderAccordionItem('deductions', '2. Annual Eligible Deductions & Relief', R.totalDeductions, 'gray', deductionsBreakdown)}
+                            ${renderAccordionItem('deductions', '2. Total Tax Deductions & Relief', R.totalTaxDeductions, 'gray', deductionsBreakdown)}
                             
                             ${renderAccordionItem('tax', '3. Total Annual Tax Payable', R.taxPayable, 'green', taxBreakdown)}
 
-                            ${renderAccordionItem('takehome', '4. NET ANNUAL TAKE-HOME PAY', FinalAnnualTakeHome, 'yellow', takeHomeBreakdown, true)}
+                            ${renderAccordionItem('takehome', '4. NET ANNUAL TAKE-HOME PAY (Cash Flow)', R.annualTakeHome, 'yellow', takeHomeBreakdown, true)}
 
-                            ${renderAccordionItem('monthly', '5. Worker\'s Monthly Take-Home Pay', R.monthlyTakeHome, 'indigo', monthlyBreakdown, true)}
+                            ${renderAccordionItem('monthly', '5. Worker\'s Monthly Take-Home Pay (Cash Flow)', R.monthlyTakeHome, 'indigo', monthlyBreakdown, true)}
 
                             <div class="bg-indigo-50 rounded-lg p-5 flex justify-between font-bold text-lg border border-indigo-200">
                                 <span>6. Effective Tax Rate (Annual Tax / Annual Gross):</span>
@@ -907,7 +915,6 @@
         }
 
         function renderBulkInput() {
-            // (Unchanged, for brevity)
              return `
                 <div class="max-w-3xl mx-auto">
                     <div class="bg-white rounded-2xl shadow-xl p-8">
