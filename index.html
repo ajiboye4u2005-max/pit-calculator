@@ -980,7 +980,7 @@
              const totalMonthlyPAYE = bulkResult.reduce((sum, res) => sum + res.monthlyPAYE, 0);
              const totalMonthlyNetSalary = bulkResult.reduce((sum, res) => sum + res.monthlyNetSalary, 0);
 
-             // New function to handle the detail row toggle
+             // This is the new function that replaces the faulty window.open logic
              window.toggleDetailRow = (index) => {
                  const detailRow = document.getElementById('detail-row-' + index);
                  const toggleIcon = document.getElementById('toggle-icon-' + index);
