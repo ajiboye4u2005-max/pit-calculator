@@ -85,27 +85,27 @@
             // Salary Breakdown Input columns (3, 4, 5, 6) - Input Data
             "Basic Salary", "Housing Allowance", "Transportation Allowance", "Other Allowances",
             // Computed Data (Starts here)
-            "Gross Annual Income (=Basic+Housing+Trans+Other)", // (7)
+            "Gross Annual Income", // (7)
             // Deduction Inputs (8, 9, 10) - Input Data
-            "NHIS Contribution", "Loan Interest", "Life Insurance Premium",
+            "NHIS Contribution (Input)", "Loan Interest (Input)", "Life Insurance Premium (Input)",
             // Computed Deductions (11, 12) - Computed Data
             "NHF Contribution (=2.5%*Basic Salary)", 
             "Pension Contribution (=8%*(Basic+Housing+Trans))", 
             // Remaining Deduction Input (13) - Input Data
             "Annual Rent Paid",
             // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
-            "Total Statutory Cash Deductions", // (14) - CASH DEDUCTION (used for take-home pay)
-            "Rent Relief", // (15)
-            "Total Deductions For Taxable Income (=Statutory+Relief)", // (16) - TAX DEDUCTION (used for taxable income)
+            "Total Statutory Cash Deductions (For Net Salary)", // (14)
+            "Rent Relief (Tax Only)", // (15)
+            "Total Deductions & Reliefs (For Taxable Income)", // (16)
             "Taxable Income", // (17)
-            "Annual Tax Payable", // (18)
+            "Annual PAYE", // (18) <-- Terminology Change
             
             // --- MONTHLY / RATE HEADERS (19-23) ---
-            "Gross Monthly Salary (=Gross Annual / 12)", // (19)
-            "Monthly Cash Deductions (=Statutory Cash / 12)", // (20)
-            "Monthly Tax Due (=Annual Tax / 12)", // (21)
-            "Worker's Take-Home Pay (Monthly)", // (22)
-            "Effective Tax Rate (Annual Tax / Annual Gross)", // (23)
+            "Gross Monthly Salary", // (19)
+            "Monthly Cash Deductions", // (20)
+            "Monthly PAYE Due", // (21) <-- Terminology Change
+            "Worker's Net Salary (Monthly)", // (22) <-- Terminology Change
+            "Effective Tax Rate (Annual PAYE / Annual Gross)", // (23)
         ];
         
         // Mapping from Header (key in uploaded file) to internal JS key
@@ -129,15 +129,16 @@
             { key: 'housingAllowance', label: 'Housing Allowance', placeholder: 'e.g., 1500000', hint: 'Housing component of salary. Part of the Pension base.' },
             { key: 'transportAllowance', label: 'Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Transport component of salary. Part of the Pension base.' },
             { key: 'otherAllowances', label: 'Other Allowances', placeholder: 'Enter 0 if none', hint: 'Any other allowances/benefits. Sum of these four is the Gross Income.' },
-            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
-            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
-            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Statutory deduction.' },
-            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For rent relief calculation.' }
+            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory cash deduction.' },
+            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Tax Relief and Cash Deduction for Net Salary calculation.' },
+            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Tax Relief and Cash Deduction for Net Salary calculation.' },
+            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For Rent Relief calculation (Tax deduction only, not cash deduction).' }
         ];
 
         // --- STATE ---
         let currentTab = 'individual';
-        let inputType = 'annual'; // 'annual' or 'monthly'
+        let inputType = 'annual'; // 'annual' or 'monthly' for individual
+        let bulkInputType = 'annual'; // 'annual' or 'monthly' for bulk
         let currentStep = 0;
         let formData = {};
         let result = null;
@@ -145,7 +146,7 @@
         
         // --- UTILITY FUNCTIONS ---
         function formatCurrency(num) {
-            if (typeof num !== 'number') return '₦0.00';
+            if (typeof num !== 'number' || isNaN(num)) return '₦0.00';
             return new Intl.NumberFormat('en-NG', {
                 style: 'currency',
                 currency: 'NGN',
@@ -154,6 +155,7 @@
         }
         
         function formatPercentage(num) {
+            if (typeof num !== 'number' || isNaN(num)) return '0.00%';
             return new Intl.NumberFormat('en-NG', {
                 style: 'percent',
                 minimumFractionDigits: 2,
@@ -169,6 +171,14 @@
                 content.classList.remove('expanded');
                 icon.classList.remove('rotate-90');
             } else {
+                // Collapse all others before expanding this one
+                document.querySelectorAll('.accordion-content.expanded').forEach(c => {
+                    c.classList.remove('expanded');
+                });
+                document.querySelectorAll('.accordion-header svg.rotate-90').forEach(i => {
+                    i.classList.remove('rotate-90');
+                });
+
                 content.classList.add('expanded');
                 icon.classList.add('rotate-90');
             }
@@ -176,21 +186,23 @@
 
         function switchInputType(type) {
             inputType = type;
-            // Reset state on type switch to avoid mixing annual/monthly numbers
             currentStep = 0;
             formData = {}; 
             result = null;
             render();
-            // Need to set focus manually after render
             setTimeout(() => {
                 const input = document.getElementById('currentInput');
                 if (input) input.focus();
             }, 100);
         }
+        
+        function setBulkInputType(type) {
+            bulkInputType = type;
+            resetBulkCalculator(); 
+        }
 
         // --- CORE CALCULATION LOGIC (Reused for both individual and bulk) ---
         function calculatePITForEmployee(data) {
-            // New HR fields are passed through without modification
             const staffName = data.staffName || '';
             const staffId = data.staffId || '';
             const staffGrade = data.staffGrade || '';
@@ -201,51 +213,43 @@
             const transportAllowance = parseFloat(data.transportAllowance) || 0;
             const otherAllowances = parseFloat(data.otherAllowances) || 0;
             
-            // Input Statutory Deductions
             const nhis = parseFloat(data.nhis) || 0;
             const loanInterest = parseFloat(data.loanInterest) || 0;
             const lifeInsurance = parseFloat(data.lifeInsurance) || 0;
             const annualRent = parseFloat(data.annualRent) || 0;
 
-            // 1. Calculate Gross Annual Income (Sum of new inputs)
+            // 1. Calculate Gross Annual Income
             const grossIncome = basicSalary + housingAllowance + transportAllowance + otherAllowances;
             
-            // 2. Calculate Computed Statutory Deductions
-            // NHF = 2.5% of Basic Salary
+            // 2. Statutory Contributions (Computed)
             const computedNhf = basicSalary * NHF_RATE; 
-            
-            // Pension = 8% of (Basic Salary + Housing Allowance + Transportation Allowance)
             const pensionBase = basicSalary + housingAllowance + transportAllowance;
             const computedPension = pensionBase * PENSION_RATE; 
 
-            // 3. Calculate Statutory Deductions (Cash Outflow)
-            // This is the total amount that is actually deducted from the payroll before tax is calculated.
+            // 3. Total Statutory CASH Deductions (For Net Salary and Taxable Income)
+            // Includes all compulsory and fixed deductions
             const statutoryCashDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
             
-            // 4. Calculate Reliefs and Taxable Income
+            // 4. Tax Reliefs (Non-Cash Deduction, or simply treated as deductible from income)
             const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
             const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
             
-            // Total Deductions FOR TAX PURPOSES (Cash Deductions + Reliefs)
+            // 5. Total Deductions FOR TAX PURPOSES (Cash Deductions + Rent Relief)
             const totalTaxDeductions = statutoryCashDeductions + rentRelief;
             
-            // 5. Calculate Taxable Income
+            // 6. Calculate Taxable Income
             const taxableIncome = Math.max(0, grossIncome - totalTaxDeductions);
             
-            // Calculate Annual Income Before Tax (CASH FLOW: Gross Income - Cash Deductions)
-            const annualIncomeBeforeTaxCash = grossIncome - statutoryCashDeductions;
-
-
+            // 7. Progressive Tax Calculation (PAYE)
             let remainingTaxable = taxableIncome;
-            let taxPayable = 0;
+            let annualPAYE = 0; // Renamed from taxPayable
             const bandDetails = [];
 
-            // Progressive Tax Calculation
             for (const bracket of PIT_BRACKETS) {
                 if (remainingTaxable <= 0) break;
                 const taxedAmount = Math.min(remainingTaxable, bracket.limit);
                 const taxInBand = taxedAmount * bracket.rate;
-                taxPayable += taxInBand;
+                annualPAYE += taxInBand;
                 remainingTaxable -= taxedAmount;
 
                 if (taxedAmount > 0) {
@@ -257,10 +261,9 @@
                     });
                 }
             }
-
             if (remainingTaxable > 0) {
                 const taxInBand = remainingTaxable * TAX_RATE_HIGHEST;
-                taxPayable += taxInBand;
+                annualPAYE += taxInBand;
                 bandDetails.push({
                     name: `Remaining Above ₦${formatCurrency(PIT_BRACKETS.slice(-1)[0].limit).replace('₦', '')}`,
                     rate: TAX_RATE_HIGHEST,
@@ -269,40 +272,39 @@
                 });
             }
             
-            // Calculate Net Annual Take-Home Pay (Cash Flow: Gross - Cash Deductions - Annual Tax)
-            // FIX: Use statutoryCashDeductions (cash deductions) instead of totalTaxDeductions
-            const annualTakeHome = grossIncome - statutoryCashDeductions - taxPayable;
+            // 8. Calculate Net Annual Salary (Cash Flow)
+            // FIX: Gross Income - Statutory Cash Deductions - Annual PAYE
+            const annualNetSalary = grossIncome - statutoryCashDeductions - annualPAYE;
             
             // --- MONTHLY CALCULATIONS ---
             const grossMonthly = grossIncome / MONTHS_IN_YEAR;
-            // Monthly Cash Deductions
             const monthlyCashDeductions = statutoryCashDeductions / MONTHS_IN_YEAR; 
-            const monthlyTax = taxPayable / MONTHS_IN_YEAR;
-            const monthlyTakeHome = annualTakeHome / MONTHS_IN_YEAR; // This is now correctly calculated based on annualTakeHome
-            const effectiveTaxRate = grossIncome > 0 ? taxPayable / grossIncome : 0;
+            const monthlyPAYE = annualPAYE / MONTHS_IN_YEAR; // Renamed from monthlyTax
+            const monthlyNetSalary = annualNetSalary / MONTHS_IN_YEAR; // Renamed from monthlyTakeHome
+            const effectiveTaxRate = grossIncome > 0 ? annualPAYE / grossIncome : 0;
 
             return {
                 ...data, // Include all input data for display/drill-down
-                basicSalary, housingAllowance, transportAllowance, otherAllowances, annualRent, // annual figures used
-                grossIncome, // Computed field
-                computedNhf, // Computed field
-                computedPension, // Computed field
+                basicSalary, housingAllowance, transportAllowance, otherAllowances, annualRent, 
+                grossIncome, 
                 
-                // Key Calculation Results
-                statutoryDeductions: statutoryCashDeductions, // (The actual CASH deductions)
+                // Deduction Components
+                computedNhf, 
+                computedPension, 
+                statutoryDeductions: statutoryCashDeductions, // Total Cash Deductions
                 rentRelief,
                 totalTaxDeductions: totalTaxDeductions, // Total deductions for TAXABLE INCOME calculation
                 
-                annualIncomeBeforeTaxCash, // Cash Flow before Tax
+                // Final Annual Results
                 taxableIncome,
-                taxPayable,
-                annualTakeHome, 
+                annualPAYE, // Renamed
+                annualNetSalary, // Renamed
                 
                 // Monthly Fields
                 grossMonthly,
-                monthlyDeductions: monthlyCashDeductions, // (The actual CASH monthly deductions)
-                monthlyTax,
-                monthlyTakeHome,
+                monthlyDeductions: monthlyCashDeductions,
+                monthlyPAYE, // Renamed
+                monthlyNetSalary, // Renamed
                 effectiveTaxRate,
 
                 bandDetails
@@ -311,7 +313,6 @@
 
         // --- INDIVIDUAL CALCULATION LOGIC ---
         function calculatePIT() {
-            // Individual calculation doesn't use the HR fields, but the function handles it gracefully
             result = calculatePITForEmployee(formData);
             render();
         }
@@ -327,18 +328,12 @@
                 return;
             }
 
-            // Check for zero Basic Salary, as it's critical for computation
             if (currentStepKey === 'basicSalary' && value === 0 && input.value !== '0') {
                  alert('Basic Salary cannot be zero for calculation.');
                 return;
             }
             
-            // Store the annual equivalent of the input
             const annualValue = inputType === 'monthly' ? value * MONTHS_IN_YEAR : value;
-            
-            // Special handling for annualRent: if monthly input is used, save the original monthly value to 
-            // the annualRent key, as the formula expects annual rent. 
-            // Note: Annual Rent must be the total annual value regardless of input type.
             formData[currentStepKey] = annualValue;
 
             if (currentStep < steps.length - 1) {
@@ -368,7 +363,7 @@
             currentStep = 0;
             formData = {};
             result = null;
-            inputType = 'annual'; // Reset to default annual input
+            inputType = 'annual'; 
             render();
             setTimeout(() => {
                 const input = document.getElementById('currentInput');
@@ -378,13 +373,9 @@
 
         // --- BULK UPLOAD LOGIC ---
         
-        /**
-         * Generates and downloads an Excel template with the required column headers.
-         */
         function generateAndDownloadTemplate() {
             const sheetData = [
                 TEMPLATE_HEADERS,
-                // Add a sample row for user guidance 
                 ["John Doe", "A1001", "Senior", 2000000, 1500000, 1000000, 500000, 0, 0, 0, 0]
             ];
             
@@ -404,6 +395,8 @@
                 alert('Please upload a valid CSV or Excel (.xlsx) file.');
                 return;
             }
+            
+            const isMonthlyInput = bulkInputType === 'monthly';
 
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -429,7 +422,12 @@
                         let rawValue = row[index] !== undefined && row[index] !== null ? String(row[index]).replace(/,/g, '') : '';
                         
                         if (FINANCIAL_KEYS.includes(key)) {
-                            employee[key] = parseFloat(rawValue) || 0;
+                            let value = parseFloat(rawValue) || 0;
+                            // Convert to annual if monthly input is selected
+                            if (isMonthlyInput && value > 0) {
+                                value *= MONTHS_IN_YEAR;
+                            }
+                            employee[key] = value;
                         } else {
                             employee[key] = rawValue;
                         }
@@ -437,7 +435,7 @@
                     
                     const requiredAllowancePresent = INPUT_ALLOWANCE_KEYS.every(key => key in employee);
                     if (requiredAllowancePresent) {
-                         if (employee.basicSalary > 0) {
+                         if (employee.basicSalary >= 0) { // Allow 0 basic salary, although results will be 0
                             return calculatePITForEmployee(employee);
                          }
                     }
@@ -445,7 +443,7 @@
                 }).filter(e => e !== null);
 
                 if (employeeData.length === 0) {
-                    alert('No valid records found after processing. Check your header names and ensure Basic Salary is entered for each row.');
+                    alert('No valid records found after processing. Check your header names and ensure required data is entered for each row.');
                     return;
                 }
 
@@ -457,7 +455,7 @@
         
         function applyAestheticFormatting(ws, numRows) {
             const range = XLSX.utils.decode_range(ws['!ref']);
-            const headerRow = range.s.r; // Typically 0
+            const headerRow = range.s.r; 
 
             const THIN_BORDER = { style: "thin", color: { auto: 1 } };
             const THICK_BORDER = { style: "thick", color: { auto: 1 } };
@@ -468,11 +466,10 @@
             const COL_INPUT_END = 13; 
             const COL_FINANCIAL_START = 3; 
             const COL_TAXABLE_INCOME = 17; 
-            const COL_TAX_PAYABLE = 18; 
-            const COL_MONTHLY_TAKE_HOME = 22; // UPDATED INDEX (was 21)
-            const COL_RATE = 23; // UPDATED INDEX (was 22)
+            const COL_PAYE = 18; 
+            const COL_MONTHLY_NET_SALARY = 22; 
+            const COL_RATE = 23; 
             
-            // 1. Currency/Percentage Format
             for (let R = headerRow + 1; R <= range.e.r; ++R) {
                 for (let C = COL_FINANCIAL_START; C <= range.e.c; ++C) {
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
@@ -486,7 +483,6 @@
                 }
             }
 
-            // 2. Header Style (Bold, Centered, Green Background, Thin Borders for inner separation)
             const headerStyle = {
                 font: { bold: true, color: { rgb: "FFFFFF" } },
                 fill: { fgColor: { rgb: "047857" } }, // Emerald-700
@@ -499,9 +495,8 @@
                 ws[cellAddress] = { ...ws[cellAddress], s: headerStyle };
             }
 
-            // 3. Differentiate Input (Yellow-ish) vs. Output (Blue-ish)
-            const inputStyle = { fill: { fgColor: { rgb: "FFFACD" } } }; // Lemon Chiffon
-            const outputStyle = { fill: { fgColor: { rgb: "E6F7FF" } } }; // Pale Blue
+            const inputStyle = { fill: { fgColor: { rgb: "FFFACD" } } }; 
+            const outputStyle = { fill: { fgColor: { rgb: "E6F7FF" } } }; 
             
             const finalResultStyle = { 
                 font: { bold: true },
@@ -509,30 +504,24 @@
                 border: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER }
             };
 
-
             for (let R = headerRow + 1; R <= range.e.r; ++R) {
-                // Apply input background to salary breakdown (Cols 3 to 6)
                 for (let C = COL_FINANCIAL_START; C <= 6; ++C) {
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
                     if (!ws[cellAddress].s) ws[cellAddress].s = {};
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
                 }
                 
-                // Apply output background to computed Gross Income (Col 7)
                 let grossIncomeAddr = XLSX.utils.encode_cell({ c: 7, r: R });
                 if (!ws[grossIncomeAddr].s) ws[grossIncomeAddr].s = {};
                 ws[grossIncomeAddr].s = { ...ws[grossIncomeAddr].s, ...outputStyle };
                 
-                // Apply input background to remaining inputs (NHIS, Loan, Insurance, Rent) (Cols 8, 9, 10, 13)
                 [8, 9, 10, 13].forEach(C => {
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
                     if (!ws[cellAddress].s) ws[cellAddress].s = {};
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
                 });
 
-                // Apply output background to all computed deduction/result columns (Cols 7, 11, 12, 14 to 23)
                 for (let C = 7; C <= range.e.c; ++C) {
-                    // Skip input columns 8, 9, 10, 13, which were already marked as input
                     if ([8, 9, 10, 13].includes(C)) continue; 
 
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
@@ -540,22 +529,19 @@
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...outputStyle };
                 }
 
-
-                // Apply special final result style to key outputs
                 let taxableIncomeAddr = XLSX.utils.encode_cell({ c: COL_TAXABLE_INCOME, r: R });
                 if (!ws[taxableIncomeAddr].s) ws[taxableIncomeAddr].s = {};
                 ws[taxableIncomeAddr].s = { ...ws[taxableIncomeAddr].s, ...finalResultStyle };
 
-                let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_TAX_PAYABLE, r: R });
+                let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_PAYE, r: R });
                 if (!ws[taxPayableAddr].s) ws[taxPayableAddr].s = {};
                 ws[taxPayableAddr].s = { ...ws[taxPayableAddr].s, ...finalResultStyle };
 
-                let takeHomeAddr = XLSX.utils.encode_cell({ c: COL_MONTHLY_TAKE_HOME, r: R });
+                let takeHomeAddr = XLSX.utils.encode_cell({ c: COL_MONTHLY_NET_SALARY, r: R });
                 if (!ws[takeHomeAddr].s) ws[takeHomeAddr].s = {};
                 ws[takeHomeAddr].s = { ...ws[takeHomeAddr].s, ...finalResultStyle };
             }
 
-            // 4. Apply THICK Borders for Section Separation
             for (let R = headerRow; R <= range.e.r; ++R) {
                 let cellAddr1 = XLSX.utils.encode_cell({ c: COL_HR_END, r: R });
                 if (!ws[cellAddr1]) ws[cellAddr1] = {};
@@ -570,7 +556,6 @@
                 ws[cellAddr2].s.border.right = THICK_BORDER;
             }
 
-            // 5. Auto-width Columns (Best Effort)
             const columnWidths = OUTPUT_HEADERS.map((header, index) => {
                 let w = header.length + 4; 
                 if (index >= COL_FINANCIAL_START) {
@@ -590,7 +575,6 @@
                 return;
             }
 
-            // Map the calculated data to the output row structure (24 columns)
             const outputData = bulkResult.map(res => [
                 // HR Data (0, 1, 2)
                 res.staffName, res.staffId, res.staffGrade,
@@ -611,17 +595,17 @@
                 // Remaining Deduction Input (13)
                 res.annualRent,
                 // Calculated columns (14, 15, 16, 17, 18)
-                res.statutoryDeductions, // (14) - Cash Deductions (Correct)
-                res.rentRelief, // (15) (Correct)
-                res.totalTaxDeductions, // (16) - Total Deductions FOR TAXABLE INCOME (statutory + relief)
-                res.taxableIncome, // (17)
-                res.taxPayable, // (18)
+                res.statutoryDeductions, 
+                res.rentRelief,
+                res.totalTaxDeductions, 
+                res.taxableIncome,
+                res.annualPAYE, // Renamed (18)
                 
                 // --- NEW FIELDS (19-23) ---
                 res.grossMonthly, // (19)
-                res.monthlyDeductions, // (20) - Monthly Cash Deductions
-                res.monthlyTax, // (21)
-                res.monthlyTakeHome, // (22) - Monthly Cash Take-Home Pay (FIXED)
+                res.monthlyDeductions, // (20)
+                res.monthlyPAYE, // Renamed (21)
+                res.monthlyNetSalary, // Renamed (22)
                 res.effectiveTaxRate // (23)
             ]);
 
@@ -629,10 +613,7 @@
 
             const wb = XLSX.utils.book_new();
             
-            // Create a temporary worksheet and apply cell styling immediately
             const tempSheet = XLSX.utils.aoa_to_sheet(sheetData, { cellStyles: true });
-            
-            // Apply formatting styles
             applyAestheticFormatting(tempSheet, outputData.length);
             
             XLSX.utils.book_append_sheet(wb, tempSheet, "PIT Calculations");
@@ -669,8 +650,9 @@
         }
         
         // Helper function for collapsible sections
-        function renderAccordionItem(id, title, totalAmount, colorClass, breakdownHtml, isFinal=false) {
-            const totalDisplay = formatCurrency(totalAmount);
+        function renderAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false) {
+            const annualDisplay = formatCurrency(totalAnnualAmount);
+            const monthlyDisplay = formatCurrency(totalAnnualAmount / MONTHS_IN_YEAR);
             const titleColor = isFinal ? 'text-xl text-green-700' : 'text-lg text-gray-800';
             const bgColor = isFinal ? 'bg-green-100 hover:bg-green-200' : `bg-${colorClass}-50 hover:bg-${colorClass}-100`;
 
@@ -683,63 +665,86 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
                             </svg>
                         </h3>
-                        <span class="${titleColor} font-bold">${totalDisplay}</span>
+                        <div class="flex flex-col text-right">
+                            <span class="${titleColor} font-bold text-sm">Annual: ${annualDisplay}</span>
+                            <span class="${titleColor} font-bold text-xs text-gray-600">Monthly: ${monthlyDisplay}</span>
+                        </div>
                     </div>
 
                     <div id="content-${id}" class="accordion-content bg-white p-0">
                         <div class="p-5 border-t border-${colorClass}-200">
+                             <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
+                                <span class="w-1/2">Element</span>
+                                <span class="w-1/4 text-right">Annual Figure</span>
+                                <span class="w-1/4 text-right">Monthly Figure</span>
+                            </div>
                             ${breakdownHtml}
                         </div>
                     </div>
                 </div>
             `;
         }
+        
+        function renderAnnualMonthlyRow(label, annualAmount, monthlyAmount, isBold = false) {
+            const fontClass = isBold ? 'font-semibold text-base text-gray-800' : 'text-sm text-gray-700';
+            return `
+                <div class="flex items-center py-2 border-b border-gray-100 last:border-b-0">
+                    <span class="w-1/2 ${fontClass}">${label}:</span>
+                    <span class="w-1/4 text-right ${fontClass}">${formatCurrency(annualAmount)}</span>
+                    <span class="w-1/4 text-right ${fontClass}">${formatCurrency(monthlyAmount)}</span>
+                </div>
+            `;
+        }
 
 
         function renderResult() {
-            const R = result; // Shorthand for result object
-
-            // R.totalTaxDeductions: Statutory Deductions + Rent Relief (Used for Taxable Income)
-            // R.statutoryDeductions: Statutory Deductions (Cash Outflow)
-            // R.annualIncomeBeforeTaxCash: Gross Income - Statutory Deductions (Cash Flow Before Tax)
-            // R.annualTakeHome: Gross Income - Statutory Deductions - Tax Payable (Final Cash Flow)
+            const R = result; 
 
             // 1. Gross Annual Salary Breakdown
             const grossBreakdown = `
                 <div class="space-y-2 text-gray-700">
-                    <div class="flex justify-between"><span>Basic Annual Salary:</span><span>${formatCurrency(R.basicSalary)}</span></div>
-                    <div class="flex justify-between"><span>Annual Housing Allowance:</span><span>${formatCurrency(R.housingAllowance)}</span></div>
-                    <div class="flex justify-between"><span>Annual Transportation Allowance:</span><span>${formatCurrency(R.transportAllowance)}</span></div>
-                    <div class="flex justify-between"><span>Other Annual Allowances:</span><span>${formatCurrency(R.otherAllowances)}</span></div>
+                    ${renderAnnualMonthlyRow('Basic Salary', R.basicSalary, R.basicSalary / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Housing Allowance', R.housingAllowance, R.housingAllowance / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Transportation Allowance', R.transportAllowance, R.transportAllowance / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Other Allowances', R.otherAllowances, R.otherAllowances / MONTHS_IN_YEAR)}
                 </div>
             `;
-
-            // 2. Annual Eligible Deductions Breakdown
-            const deductionsBreakdown = `
+            
+            // 2. Statutory Cash Deductions Breakdown
+            const statutoryDeductionsBreakdown = `
                 <div class="space-y-2 text-gray-700">
-                    <p class="font-medium text-sm text-gray-600 mb-2">Statutory Contributions (Cash Deductions):</p>
-                    <div class="flex justify-between"><span>NHF Contribution (2.5% of Basic):</span><span>${formatCurrency(R.computedNhf)}</span></div>
-                    <div class="flex justify-between"><span>Pension Contribution (8% of Pensionable Emoluments):</span><span>${formatCurrency(R.computedPension)}</span></div>
-                    <div class="flex justify-between"><span>NHIS Contribution (Input):</span><span>${formatCurrency(R.nhis)}</span></div>
-                    <div class="flex justify-between"><span>Loan Interest Paid (Input):</span><span>${formatCurrency(R.loanInterest)}</span></div>
-                    <div class="flex justify-between"><span>Life Insurance Premium (Input):</span><span>${formatCurrency(R.lifeInsurance)}</span></div>
+                    ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    <p class="font-medium text-sm text-gray-600 mb-2">Relief (Non-Cash Deduction, used for tax calculation only):</p>
-                    <div class="flex justify-between"><span>Rent Relief (20% of Annual Rent, max ₦${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')}):</span><span>${formatCurrency(R.rentRelief)}</span></div>
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.statutoryDeductions, R.monthlyDeductions, true)}
+                </div>
+            `;
+            
+            // 3. Tax Reliefs Breakdown
+            const totalReliefs = R.totalTaxDeductions - R.statutoryDeductions;
+            const reliefsBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    <p class="text-sm text-gray-500 mb-2">These reduce Taxable Income (used for PAYE calculation):</p>
+                    ${renderAnnualMonthlyRow(`Rent Relief (Max ${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')})`, R.rentRelief, R.rentRelief / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    <div class="flex justify-between font-semibold"><span>Total Deductions for Taxable Income:</span><span>${formatCurrency(R.totalTaxDeductions)}</span></div>
+                    ${renderAnnualMonthlyRow('Total Tax Deductions & Reliefs', R.totalTaxDeductions, R.totalTaxDeductions / MONTHS_IN_YEAR, true)}
+                    <p class="mt-2 text-xs text-red-600">Note: Only Statutory Cash Deductions (above) are removed from the paycheck before PAYE tax.</p>
                 </div>
             `;
 
-            // 3. Annual Tax Progressive Computation Breakdown
-            const taxBreakdown = `
+
+            // 4. PAYE Tax Progressive Computation Breakdown
+            const payeBreakdown = `
                 <div class="space-y-3 text-gray-700">
                     <div class="bg-yellow-100 rounded p-3 flex justify-between font-semibold text-base">
                         <span>Taxable Income (Gross - Total Tax Deductions):</span>
                         <span class="text-yellow-700">${formatCurrency(R.taxableIncome)}</span>
                     </div>
                     
-                    <p class="font-medium text-sm text-gray-600 mb-2">Tax Bands Breakdown:</p>
+                    <p class="font-medium text-sm text-gray-600 mb-2">PAYE Tax Bands Breakdown:</p>
                     ${R.bandDetails.map(band => `
                         <div class="flex justify-between text-sm bg-white rounded p-2 border-l-2 border-green-300">
                             <span class="font-medium text-gray-700">
@@ -753,22 +758,12 @@
                 </div>
             `;
             
-            // 4. Take-Home Pay Computation Breakdown
-            const takeHomeBreakdown = `
+            // 5. Net Salary Computation Breakdown
+            const netSalaryBreakdown = `
                 <div class="space-y-2 text-gray-700">
-                    <div class="flex justify-between"><span>Gross Annual Income:</span><span>${formatCurrency(R.grossIncome)}</span></div>
-                    <div class="flex justify-between"><span>(-) Total Statutory Cash Deductions:</span><span class="text-red-600">(${formatCurrency(R.statutoryDeductions)})</span></div>
-                    <div class="flex justify-between font-medium border-t border-dashed pt-1"><span>Income Before Tax (Cash Flow):</span><span>${formatCurrency(R.annualIncomeBeforeTaxCash)}</span></div>
-                    <div class="flex justify-between"><span>(-) Total Annual Tax Payable:</span><span class="text-red-600">(${formatCurrency(R.taxPayable)})</span></div>
-                </div>
-            `;
-
-            // 5. Monthly Equivalents Breakdown
-            const monthlyBreakdown = `
-                <div class="space-y-2 text-gray-700">
-                    <div class="flex justify-between"><span>Gross Monthly Salary:</span><span>${formatCurrency(R.grossMonthly)}</span></div>
-                    <div class="flex justify-between"><span>Monthly Cash Deductions:</span><span>${formatCurrency(R.monthlyDeductions)}</span></div>
-                    <div class="flex justify-between"><span>Monthly Tax Due:</span><span class="text-red-600">${formatCurrency(R.monthlyTax)}</span></div>
+                    ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
+                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions', R.statutoryDeductions * -1, R.monthlyDeductions * -1)}
+                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
                 </div>
             `;
 
@@ -778,24 +773,28 @@
                     <div class="bg-white rounded-2xl shadow-xl p-8">
                         <div class="text-center mb-6">
                             <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Breakdown</h2>
-                            <p class="text-gray-600">Annual and Monthly Equivalents</p>
-                            ${R.staffName ? `<p class="mt-2 text-lg font-medium text-blue-600">Employee: ${R.staffName} (${R.staffId})</p>` : ''}
+                            <p class="text-gray-600">Employee: ${R.staffName || 'Individual'}</p>
+                            <div class="mt-4 flex justify-between bg-gray-100 p-3 rounded-lg text-sm font-semibold text-gray-600">
+                                <span class="w-1/2">Details</span>
+                                <span class="w-1/4 text-right">Annual Figures</span>
+                                <span class="w-1/4 text-right">Monthly Figures</span>
+                            </div>
                         </div>
 
                         <div class="space-y-4">
                             
-                            ${renderAccordionItem('gross', '1. Gross Annual Salary', R.grossIncome, 'blue', grossBreakdown)}
+                            ${renderAccordionItem('gross', '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
 
-                            ${renderAccordionItem('deductions', '2. Total Tax Deductions & Relief', R.totalTaxDeductions, 'gray', deductionsBreakdown)}
+                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions', R.statutoryDeductions, 'gray', statutoryDeductionsBreakdown)}
                             
-                            ${renderAccordionItem('tax', '3. Total Annual Tax Payable', R.taxPayable, 'green', taxBreakdown)}
+                            ${renderAccordionItem('reliefs', '3. Tax Reliefs', totalReliefs, 'orange', reliefsBreakdown)}
 
-                            ${renderAccordionItem('takehome', '4. NET ANNUAL TAKE-HOME PAY (Cash Flow)', R.annualTakeHome, 'yellow', takeHomeBreakdown, true)}
+                            ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
 
-                            ${renderAccordionItem('monthly', '5. Worker\'s Monthly Take-Home Pay (Cash Flow)', R.monthlyTakeHome, 'indigo', monthlyBreakdown, true)}
+                            ${renderAccordionItem('netsalary', '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true)}
 
                             <div class="bg-indigo-50 rounded-lg p-5 flex justify-between font-bold text-lg border border-indigo-200">
-                                <span>6. Effective Tax Rate (Annual Tax / Annual Gross):</span>
+                                <span>6. Effective Tax Rate (Annual PAYE / Annual Gross):</span>
                                 <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
                             </div>
 
@@ -814,11 +813,11 @@
                             </div>
 
 
-                            <button onclick="${bulkResult ? 'currentTab = \'bulk\'; result = null; render();' : 'resetCalculator();'}" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                            <button onclick="${bulkResult ? 'window.close();' : 'resetCalculator();'}" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
                                 </svg>
-                                ${bulkResult ? 'Back to Bulk Summary' : 'Start New Calculation'}
+                                ${bulkResult ? 'Close Individual Breakdown' : 'Start New Calculation'}
                             </button>
                         </div>
                     </div>
@@ -830,7 +829,7 @@
             const step = steps[currentStep];
             const progress = ((currentStep + 1) / steps.length) * 100;
             const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
-            const suffix = inputType === 'annual' ? '' : ` (x${MONTHS_IN_YEAR} for Annual)`;
+            const suffix = inputType === 'annual' ? '' : ` (x${MONTHS_IN_YEAR} for Annual Output)`;
 
             return `
                 <div class="max-w-2xl mx-auto">
@@ -900,7 +899,7 @@
                                     </button>
                                 ` : ''}
                                 <button onclick="handleNext()" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                    ${currentStep === steps.length - 1 ? 'Calculate Tax' : 'Next'}
+                                    ${currentStep === steps.length - 1 ? 'Calculate PAYE' : 'Next'}
                                     ${currentStep < steps.length - 1 ? `
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
@@ -921,9 +920,23 @@
                         <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">Bulk Payroll Calculation</h2>
 
                         <div class="space-y-6">
+                            
+                            <div class="mb-4">
+                                <label class="block text-sm font-semibold text-gray-800 mb-2">Select Input Data Frequency (Affects file processing):</label>
+                                <div class="flex bg-gray-200 rounded-lg p-1">
+                                    <button onclick="setBulkInputType('annual')"
+                                        class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${bulkInputType === 'annual' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-300'}">
+                                        Annual Data Input
+                                    </button>
+                                    <button onclick="setBulkInputType('monthly')"
+                                        class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${bulkInputType === 'monthly' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-300'}">
+                                        Monthly Data Input (Converts to Annual)
+                                    </button>
+                                </div>
+                            </div>
                             <div class="bg-blue-50 border-l-4 border-blue-400 p-4 text-sm text-gray-700">
                                 <p class="font-semibold mb-2">1. Download Input Template:</p>
-                                <p class="mb-3">Use the template below to ensure your column headers are correct. **Do not include NHF or Pension columns**, as they are now automatically computed.</p>
+                                <p class="mb-3">Use the template below to ensure your column headers are correct. If you select **Monthly Data Input** above, the system will multiply all financial columns by 12 before calculating the annual tax.</p>
                                 
                                 <button onclick="generateAndDownloadTemplate()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -935,8 +948,7 @@
                                 <p class="font-semibold mt-4 mb-2">2. Upload Payroll File:</p>
                                 <ul class="list-disc list-inside space-y-1 text-xs ml-4">
                                     <li>Ensure the four salary breakdown columns are present.</li>
-                                    <li>**NHF is 2.5% of Basic Salary.**</li>
-                                    <li>**Pension is 8% of (Basic Salary + Housing Allowance + Transportation Allowance).**</li>
+                                    <li>Pension and NHF are automatically calculated.</li>
                                 </ul>
                             </div>
 
@@ -961,16 +973,51 @@
         }
 
         function renderBulkResult() {
-             const totalAnnualTax = bulkResult.reduce((sum, res) => sum + res.taxPayable, 0);
+             const totalAnnualPAYE = bulkResult.reduce((sum, res) => sum + res.annualPAYE, 0);
              const totalGrossMonthly = bulkResult.reduce((sum, res) => sum + res.grossMonthly, 0);
-             const totalMonthlyTax = bulkResult.reduce((sum, res) => sum + res.monthlyTax, 0);
+             const totalMonthlyPAYE = bulkResult.reduce((sum, res) => sum + res.monthlyPAYE, 0);
+             const totalMonthlyNetSalary = bulkResult.reduce((sum, res) => sum + res.monthlyNetSalary, 0);
 
-             // Function to handle row click and display individual result
+             // Function to handle row click and display individual result in a new window/tab
              window.viewIndividualResult = (index) => {
-                 result = bulkResult[index];
-                 currentTab = 'individual';
-                 // Ensure the individual view shows the full breakdown initially
-                 render();
+                 const resultData = bulkResult[index];
+                 
+                 // Package data and open a new window
+                 const resultHTML = renderResult.call({ result: resultData, bulkResult: bulkResult });
+                 const newWindow = window.open("", "_blank");
+                 
+                 // Inject necessary styles and script environment into the new window
+                 newWindow.document.write(`
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>PIT Breakdown for ${resultData.staffName || 'Employee'}</title>
+                        <script src="https://cdn.tailwindcss.com"></script>
+                        <style>
+                            ${document.querySelector('style').innerHTML} 
+                            body { background: #f0fdf4; }
+                        </style>
+                    </head>
+                    <body class="p-4">
+                        <div id="app">${resultHTML}</div>
+                        <script>
+                            // Re-expose necessary functions in the new window context
+                            const MONTHS_IN_YEAR = 12;
+                            const RENT_RELIEF_CAP = ${RENT_RELIEF_CAP};
+                            const formatCurrency = ${formatCurrency.toString()};
+                            const formatPercentage = ${formatPercentage.toString()};
+                            const toggleAccordion = ${toggleAccordion.toString()};
+                            const renderAnnualMonthlyRow = ${renderAnnualMonthlyRow.toString()};
+                            // Manually expand the first accordion item (Gross Income) for immediate viewing
+                            document.getElementById('content-gross').classList.add('expanded');
+                            document.getElementById('icon-gross').classList.add('rotate-90');
+                        </script>
+                    </body>
+                    </html>
+                 `);
+                 newWindow.document.close();
              }
 
              return `
@@ -978,26 +1025,32 @@
                     <div class="bg-white rounded-2xl shadow-xl p-8">
                         <div class="text-center mb-6">
                             <h2 class="text-3xl font-bold text-gray-800">Bulk Calculation Complete</h2>
-                            <p class="text-gray-600 mt-2">Processed ${bulkResult.length} records. Click any row for a detailed breakdown.</p>
+                            <p class="text-gray-600 mt-2">Processed ${bulkResult.length} records. Click any row for a detailed breakdown in a **new window**.</p>
                         </div>
 
                         <div class="space-y-6">
                             <div class="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-6 text-white text-center">
-                                <div class="text-sm font-medium mb-2">TOTAL ANNUAL TAX ACROSS ALL RECORDS</div>
+                                <div class="text-sm font-medium mb-2">TOTAL ANNUAL PAYE ACROSS ALL RECORDS</div>
                                 <div class="text-4xl font-bold">
-                                    ${formatCurrency(totalAnnualTax)}
+                                    ${formatCurrency(totalAnnualPAYE)}
                                 </div>
                             </div>
                             
                             <div class="bg-blue-50 rounded-lg p-6 text-gray-700">
                                 <h3 class="text-xl font-semibold text-gray-800 mb-4">Monthly Payroll Totals</h3>
-                                <div class="flex justify-between font-medium text-lg border-b border-blue-200 pb-2 mb-2">
-                                    <span>Total Gross Monthly Salary:</span>
-                                    <span class="text-blue-700">${formatCurrency(totalGrossMonthly)}</span>
-                                </div>
-                                <div class="flex justify-between font-medium text-lg">
-                                    <span>Total Monthly Tax Due:</span>
-                                    <span class="text-red-600 font-bold">${formatCurrency(totalMonthlyTax)}</span>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <div class="font-medium text-sm">Total Gross Monthly Salary:</div>
+                                        <div class="text-blue-700 font-bold text-lg">${formatCurrency(totalGrossMonthly)}</div>
+                                    </div>
+                                    <div>
+                                        <div class="font-medium text-sm">Total Monthly PAYE Due:</div>
+                                        <div class="text-red-600 font-bold text-lg">${formatCurrency(totalMonthlyPAYE)}</div>
+                                    </div>
+                                    <div class="col-span-2">
+                                        <div class="font-medium text-sm border-t pt-2 mt-2">Total Monthly Net Salary:</div>
+                                        <div class="text-green-700 font-bold text-xl">${formatCurrency(totalMonthlyNetSalary)}</div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1006,9 +1059,9 @@
                                     <thead class="bg-gray-50">
                                         <tr>
                                             <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name/ID</th>
-                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Gross Annual</th>
-                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual Tax</th>
-                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Take-Home</th>
+                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual Gross</th>
+                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Annual PAYE</th>
+                                            <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Monthly Net Salary</th>
                                         </tr>
                                     </thead>
                                     <tbody class="bg-white divide-y divide-gray-200">
@@ -1019,8 +1072,8 @@
                                                     <span class="text-xs text-gray-500">${res.staffId || 'No ID'}</span>
                                                 </td>
                                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 text-right">${formatCurrency(res.grossIncome)}</td>
-                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-semibold text-right">${formatCurrency(res.taxPayable)}</td>
-                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-green-700 font-bold text-right">${formatCurrency(res.monthlyTakeHome)}</td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600 font-semibold text-right">${formatCurrency(res.annualPAYE)}</td>
+                                                <td class="px-6 py-4 whitespace-nowrap text-sm text-green-700 font-bold text-right">${formatCurrency(res.monthlyNetSalary)}</td>
                                             </tr>
                                         `).join('')}
                                     </tbody>
