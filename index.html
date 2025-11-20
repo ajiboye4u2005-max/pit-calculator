@@ -87,15 +87,17 @@
             // Computed Data (Starts here)
             "Gross Annual Income", // (7)
             // Deduction Inputs (8, 9, 10) - Input Data
-            "NHIS Contribution (Input)", "Loan Interest (Input)", "Life Insurance Premium (Input)",
+            "NHIS Contribution (Input)", 
+            "Loan Interest (Input)", // Now a Relief
+            "Life Insurance Premium (Input)", // Now a Relief
             // Computed Deductions (11, 12) - Computed Data
             "NHF Contribution (=2.5%*Basic Salary)", 
             "Pension Contribution (=8%*(Basic+Housing+Trans))", 
             // Remaining Deduction Input (13) - Input Data
             "Annual Rent Paid",
             // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
-            "Total Statutory Cash Deductions (For Net Salary)", // (14)
-            "Rent Relief (Tax Only)", // (15)
+            "Total Statutory Cash Deductions (For Net Salary)", // (14) <- NEW CALC: NHF + Pension + NHIS only
+            "Total Tax Reliefs (=Rent + Loan Int. + Life Ins.)", // (15) <- NEW HEADER/CALC
             "Total Deductions & Reliefs (For Taxable Income)", // (16)
             "Taxable Income", // (17)
             "Annual PAYE", // (18) <-- Terminology Change
@@ -130,9 +132,9 @@
             { key: 'transportAllowance', label: 'Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Transport component of salary. Part of the Pension base.' },
             { key: 'otherAllowances', label: 'Other Allowances', placeholder: 'Enter 0 if none', hint: 'Any other allowances/benefits. Sum of these four is the Gross Income.' },
             { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory cash deduction.' },
-            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Tax Relief and Cash Deduction for Net Salary calculation.' },
-            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Tax Relief and Cash Deduction for Net Salary calculation.' },
-            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For Rent Relief calculation (Tax deduction only, not cash deduction).' }
+            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Tax Relief (reduces taxable income only).' },
+            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Tax Relief (reduces taxable income only).' },
+            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For Rent Relief calculation (Tax deduction only).' }
         ];
 
         // --- STATE ---
@@ -238,16 +240,19 @@
             const pensionBase = basicSalary + housingAllowance + transportAllowance;
             const computedPension = pensionBase * PENSION_RATE; 
 
-            // 3. Total Statutory CASH Deductions (For Net Salary and Taxable Income)
-            // Includes all compulsory and fixed deductions
-            const statutoryCashDeductions = computedNhf + computedPension + nhis + loanInterest + lifeInsurance;
+            // 3. True Cash Deductions (For Net Salary) - Only NHF, Pension, NHIS are cash deductions
+            const trueCashDeductions = computedNhf + computedPension + nhis; 
             
-            // 4. Tax Reliefs (Non-Cash Deduction, or simply treated as deductible from income)
+            // 4. Tax Reliefs (For Taxable Income Reduction)
             const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
             const rentRelief = Math.min(calculatedRentRelief, RENT_RELIEF_CAP);
             
-            // 5. Total Deductions FOR TAX PURPOSES (Cash Deductions + Rent Relief)
-            const totalTaxDeductions = statutoryCashDeductions + rentRelief;
+            // Loan Interest and Life Insurance are treated as reliefs, not cash deductions.
+            const otherTaxReliefs = loanInterest + lifeInsurance;
+            const totalTaxReliefs = rentRelief + otherTaxReliefs;
+            
+            // 5. Total Deductions FOR TAX PURPOSES (Cash Deductions + All Reliefs)
+            const totalTaxDeductions = trueCashDeductions + totalTaxReliefs;
             
             // 6. Calculate Taxable Income
             const taxableIncome = Math.max(0, grossIncome - totalTaxDeductions);
@@ -285,12 +290,12 @@
             }
             
             // 8. Calculate Net Annual Salary (Cash Flow)
-            // FIX: Gross Income - Statutory Cash Deductions - Annual PAYE
-            const annualNetSalary = grossIncome - statutoryCashDeductions - annualPAYE;
+            // FIX: Gross Income - True Cash Deductions - Annual PAYE
+            const annualNetSalary = grossIncome - trueCashDeductions - annualPAYE;
             
             // --- MONTHLY CALCULATIONS ---
             const grossMonthly = grossIncome / MONTHS_IN_YEAR;
-            const monthlyCashDeductions = statutoryCashDeductions / MONTHS_IN_YEAR; 
+            const monthlyDeductions = trueCashDeductions / MONTHS_IN_YEAR; // Monthly True Cash Deductions
             const monthlyPAYE = annualPAYE / MONTHS_IN_YEAR; // Renamed from monthlyTax
             const monthlyNetSalary = annualNetSalary / MONTHS_IN_YEAR; // Renamed from monthlyTakeHome
             const effectiveTaxRate = grossIncome > 0 ? annualPAYE / grossIncome : 0;
@@ -303,8 +308,11 @@
                 // Deduction Components
                 computedNhf, 
                 computedPension, 
-                statutoryDeductions: statutoryCashDeductions, // Total Cash Deductions
+                trueCashDeductions, // Total Cash Deductions for Net Salary
+                loanInterest, // For display in Reliefs section
+                lifeInsurance, // For display in Reliefs section
                 rentRelief,
+                totalTaxReliefs, // Total reliefs (Rent, Loan, Life)
                 totalTaxDeductions: totalTaxDeductions, // Total deductions for TAXABLE INCOME calculation
                 
                 // Final Annual Results
@@ -314,7 +322,7 @@
                 
                 // Monthly Fields
                 grossMonthly,
-                monthlyDeductions: monthlyCashDeductions,
+                monthlyDeductions, // True cash deductions, monthly
                 monthlyPAYE, // Renamed
                 monthlyNetSalary, // Renamed
                 effectiveTaxRate,
@@ -580,7 +588,7 @@
                 if (index >= COL_FINANCIAL_START) {
                     w = Math.max(w, 20); 
                 }
-                if (index === 7 || index === 11 || index === 12 || index === 19 || index === 20 || index === 21 || index === 22 || index === 23) {
+                if (index === 7 || index === 11 || index === 12 || index === 14 || index === 15 || index === 19 || index === 20 || index === 21 || index === 22 || index === 23) {
                     w = Math.max(w, 35);
                 }
                 return { wch: w };
@@ -614,9 +622,9 @@
                 // Remaining Deduction Input (13)
                 res.annualRent,
                 // Calculated columns (14, 15, 16, 17, 18)
-                res.statutoryDeductions, 
-                res.rentRelief,
-                res.totalTaxDeductions, 
+                res.trueCashDeductions,      // (14) Total Statutory Cash Deductions (NHF + Pension + NHIS)
+                res.totalTaxReliefs,         // (15) Total Tax Reliefs (Rent + Loan Int. + Life Ins.)
+                res.totalTaxDeductions,      // (16) Total Deductions & Reliefs for Taxable Income
                 res.taxableIncome,
                 res.annualPAYE, // Renamed (18)
                 
@@ -668,12 +676,21 @@
             `;
         }
         
-        // Helper function for collapsible sections
-        function renderAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false) {
+        // Helper function for collapsible sections (Modified to support hiding the breakdown table header)
+        function renderAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false, isCalculationBreakdown=false) {
             const annualDisplay = formatCurrency(totalAnnualAmount);
             const monthlyDisplay = formatCurrency(totalAnnualAmount / MONTHS_IN_YEAR);
             const titleColor = isFinal ? 'text-xl text-green-700' : 'text-lg text-gray-800';
             const bgColor = isFinal ? 'bg-green-100 hover:bg-green-200' : `bg-${colorClass}-50 hover:bg-${colorClass}-100`;
+
+            const breakdownHeader = isCalculationBreakdown ? '' : `
+                <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
+                    <span class="w-1/2">Element</span>
+                    <span class="w-1/4 text-right">Annual Figure</span>
+                    <span class="w-1/4 text-right">Monthly Figure</span>
+                </div>
+            `;
+            const finalBorderClass = isFinal ? 'border-none' : `border-t border-${colorClass}-200`;
 
             return `
                 <div class="rounded-lg shadow-md overflow-hidden border border-${colorClass}-200">
@@ -691,12 +708,8 @@
                     </div>
 
                     <div id="content-${id}" class="accordion-content bg-white p-0">
-                        <div class="p-5 border-t border-${colorClass}-200">
-                             <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
-                                <span class="w-1/2">Element</span>
-                                <span class="w-1/4 text-right">Annual Figure</span>
-                                <span class="w-1/4 text-right">Monthly Figure</span>
-                            </div>
+                        <div class="p-5 ${finalBorderClass}">
+                            ${breakdownHeader}
                             ${breakdownHtml}
                         </div>
                     </div>
@@ -728,33 +741,32 @@
                 </div>
             `;
             
-            // 2. Statutory Cash Deductions Breakdown
+            // 2. Statutory Cash Deductions Breakdown (Now only NHF, Pension, NHIS)
             const statutoryDeductionsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.statutoryDeductions, R.monthlyDeductions, true)}
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.trueCashDeductions, R.monthlyDeductions, true)}
                 </div>
             `;
             
-            // 3. Tax Reliefs Breakdown
-            const totalReliefs = R.totalTaxDeductions - R.statutoryDeductions;
+            // 3. Tax Reliefs Breakdown (Now includes Loan Interest and Life Insurance)
             const reliefsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     <p class="text-sm text-gray-500 mb-2">These reduce Taxable Income (used for PAYE calculation):</p>
+                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow(`Rent Relief (Max ${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')})`, R.rentRelief, R.rentRelief / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Tax Deductions & Reliefs', R.totalTaxDeductions, R.totalTaxDeductions / MONTHS_IN_YEAR, true)}
-                    <p class="mt-2 text-xs text-red-600">Note: Only Statutory Cash Deductions (above) are removed from the paycheck before PAYE tax.</p>
+                    ${renderAnnualMonthlyRow('Total Tax Reliefs', R.totalTaxReliefs, R.totalTaxReliefs / MONTHS_IN_YEAR, true)}
+                    <p class="mt-2 text-xs text-red-600">Note: Only items in Section 2 are removed from the paycheck before PAYE tax.</p>
                 </div>
             `;
 
 
-            // 4. PAYE Tax Progressive Computation Breakdown
+            // 4. PAYE Tax Progressive Computation Breakdown (No Annual/Monthly breakdown table header)
             const payeBreakdown = `
                 <div class="space-y-3 text-gray-700">
                     <div class="bg-yellow-100 rounded p-3 flex justify-between font-semibold text-base">
@@ -776,11 +788,11 @@
                 </div>
             `;
             
-            // 5. Net Salary Computation Breakdown
+            // 5. Net Salary Computation Breakdown (No Annual/Monthly breakdown table header)
             const netSalaryBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
-                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions', R.statutoryDeductions * -1, R.monthlyDeductions * -1)}
+                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions (Sect. 2)', R.trueCashDeductions * -1, R.monthlyDeductions * -1)}
                     ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
                 </div>
             `;
@@ -803,13 +815,13 @@
                             
                             ${renderAccordionItem('gross', '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
 
-                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions', R.statutoryDeductions, 'gray', statutoryDeductionsBreakdown)}
+                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions (For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
                             
-                            ${renderAccordionItem('reliefs', '3. Tax Reliefs', totalReliefs, 'orange', reliefsBreakdown)}
+                            ${renderAccordionItem('reliefs', '3. Total Tax Reliefs', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
 
-                            ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
+                            ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown, false, true)}
 
-                            ${renderAccordionItem('netsalary', '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true)}
+                            ${renderAccordionItem('netsalary', '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
 
                             <div class="bg-indigo-50 rounded-lg p-5 flex justify-between font-bold text-lg border border-indigo-200">
                                 <span>6. Effective Tax Rate (Annual PAYE / Annual Gross):</span>
@@ -864,22 +876,21 @@
                     ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.statutoryDeductions, R.monthlyDeductions, true)}
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.trueCashDeductions, R.monthlyDeductions, true)}
                 </div>
             `;
             
             // 3. Tax Reliefs Breakdown
-            const totalReliefs = R.totalTaxDeductions - R.statutoryDeductions;
             const reliefsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     <p class="text-sm text-gray-500 mb-2">These reduce Taxable Income (used for PAYE calculation):</p>
+                    ${renderAnnualMonthlyRow('Loan Interest Paid (Input)', R.loanInterest, R.loanInterest / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Life Insurance Premium (Input)', R.lifeInsurance, R.lifeInsurance / MONTHS_IN_YEAR)}
                     ${renderAnnualMonthlyRow(`Rent Relief (Max ${formatCurrency(RENT_RELIEF_CAP).replace('₦', '')})`, R.rentRelief, R.rentRelief / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Tax Deductions & Reliefs', R.totalTaxDeductions, R.totalTaxDeductions / MONTHS_IN_YEAR, true)}
-                    <p class="mt-2 text-xs text-red-600">Note: Only Statutory Cash Deductions (above) are removed from the paycheck before PAYE tax.</p>
+                    ${renderAnnualMonthlyRow('Total Tax Reliefs', R.totalTaxReliefs, R.totalTaxReliefs / MONTHS_IN_YEAR, true)}
+                    <p class="mt-2 text-xs text-red-600">Note: Only items in Section 2 are removed from the paycheck before PAYE tax.</p>
                 </div>
             `;
 
@@ -910,17 +921,27 @@
             const netSalaryBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
-                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions', R.statutoryDeductions * -1, R.monthlyDeductions * -1)}
+                    ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions (Sect. 2)', R.trueCashDeductions * -1, R.monthlyDeductions * -1)}
                     ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
                 </div>
             `;
             
-            // Inline Accordion Item Helper (Simplified for bulk view)
-            function renderInlineAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false) {
+            // Inline Accordion Item Helper (Simplified for bulk view) (Modified to support hiding the breakdown table header)
+            function renderInlineAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false, isCalculationBreakdown=false) {
                 const annualDisplay = formatCurrency(totalAnnualAmount);
                 const monthlyDisplay = formatCurrency(totalAnnualAmount / MONTHS_IN_YEAR);
                 const titleColor = isFinal ? 'text-lg text-green-700' : 'text-base text-gray-800';
                 const bgColor = isFinal ? 'bg-green-100 hover:bg-green-200' : `bg-${colorClass}-50 hover:bg-${colorClass}-100`;
+
+                const breakdownHeader = isCalculationBreakdown ? '' : `
+                    <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
+                        <span class="w-1/2">Element</span>
+                        <span class="w-1/4 text-right">Annual Figure</span>
+                        <span class="w-1/4 text-right">Monthly Figure</span>
+                    </div>
+                `;
+                const finalBorderClass = isFinal ? 'border-none' : `border-t border-${colorClass}-200`;
+
 
                 return `
                     <div class="rounded-md shadow-sm overflow-hidden border border-${colorClass}-200">
@@ -938,12 +959,8 @@
                         </div>
 
                         <div id="content-${id}" class="accordion-content bg-white p-0">
-                            <div class="p-4 border-t border-${colorClass}-200">
-                                <div class="flex items-center text-xs font-semibold text-gray-500 pb-1 mb-2 border-b border-gray-200">
-                                    <span class="w-1/2">Element</span>
-                                    <span class="w-1/4 text-right">Annual Figure</span>
-                                    <span class="w-1/4 text-right">Monthly Figure</span>
-                                </div>
+                            <div class="p-4 ${finalBorderClass}">
+                                ${breakdownHeader}
                                 ${breakdownHtml}
                             </div>
                         </div>
@@ -956,10 +973,10 @@
                     <h3 class="text-xl font-bold text-gray-700">Detailed Breakdown for ${R.staffName || 'Employee'}</h3>
                     
                     ${renderInlineAccordionItem(`bulk-gross-${index}`, '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
-                    ${renderInlineAccordionItem(`bulk-statutory-${index}`, '2. Statutory Cash Deductions', R.statutoryDeductions, 'gray', statutoryDeductionsBreakdown)}
-                    ${renderInlineAccordionItem(`bulk-reliefs-${index}`, '3. Tax Reliefs', totalReliefs, 'orange', reliefsBreakdown)}
-                    ${renderInlineAccordionItem(`bulk-paye-${index}`, '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
-                    ${renderInlineAccordionItem(`bulk-netsalary-${index}`, '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true)}
+                    ${renderInlineAccordionItem(`bulk-statutory-${index}`, '2. Statutory Cash Deductions (For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-reliefs-${index}`, '3. Total Tax Reliefs', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-paye-${index}`, '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown, false, true)}
+                    ${renderInlineAccordionItem(`bulk-netsalary-${index}`, '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
 
                     <div class="bg-indigo-100 rounded-lg p-3 flex justify-between font-bold text-base border border-indigo-200">
                         <span>Effective Tax Rate:</span>
@@ -1218,7 +1235,7 @@
                                         class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${bulkInputType === 'monthly' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-300'}">
                                         Monthly Data Input (Converts to Annual)
                                     </button>
-                                </div>
+                                </div
                             </div>
                             <div class="bg-blue-50 border-l-4 border-blue-400 p-4 text-sm text-gray-700">
                                 <p class="font-semibold mb-2">1. Download Input Template:</p>
