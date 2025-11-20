@@ -313,7 +313,14 @@
 
         // --- INDIVIDUAL CALCULATION LOGIC ---
         function calculatePIT() {
-            result = calculatePITForEmployee(formData);
+            // Include placeholders for staff details in individual calculation
+            const employeeData = { 
+                ...formData, 
+                staffName: 'Individual Calculation', 
+                staffId: 'N/A', 
+                staffGrade: 'N/A' 
+            };
+            result = calculatePITForEmployee(employeeData);
             render();
         }
 
@@ -984,6 +991,12 @@
                  // NOW CORRECTLY CALLING renderResult with data and the isBulkView=true flag
                  const resultHTML = renderResult(resultData, true); 
                  const newWindow = window.open("", "_blank");
+
+                 // CRITICAL FIX: Check if the new window was successfully opened (not blocked)
+                 if (!newWindow) {
+                    alert("A pop-up blocker prevented the individual breakdown from opening. Please allow pop-ups for this site and try again.");
+                    return; 
+                 }
                  
                  // Inject necessary styles and script environment into the new window
                  newWindow.document.write(`
@@ -1003,12 +1016,16 @@
                         <div id="app">${resultHTML}</div>
                         <script>
                             // Re-expose necessary functions in the new window context
-                            const MONTHS_IN_YEAR = 12;
+                            const MONTHS_IN_YEAR = ${MONTHS_IN_YEAR};
                             const RENT_RELIEF_CAP = ${RENT_RELIEF_CAP};
+                            const PIT_BRACKETS = ${JSON.stringify(PIT_BRACKETS)};
+                            const TAX_RATE_HIGHEST = ${TAX_RATE_HIGHEST};
+                            
                             const formatCurrency = ${formatCurrency.toString()};
                             const formatPercentage = ${formatPercentage.toString()};
                             const toggleAccordion = ${toggleAccordion.toString()};
                             const renderAnnualMonthlyRow = ${renderAnnualMonthlyRow.toString()};
+                            
                             // Manually expand the first accordion item (Gross Income) for immediate viewing
                             document.getElementById('content-gross').classList.add('expanded');
                             document.getElementById('icon-gross').classList.add('rotate-90');
