@@ -694,17 +694,19 @@
 
             return `
                 <div class="rounded-lg shadow-md overflow-hidden border border-${colorClass}-200">
-                    <div id="header-${id}" class="accordion-header ${bgColor} p-5 flex justify-between items-center" onclick="toggleAccordion('${id}')">
-                        <h3 class="${titleColor} font-semibold flex items-center">
+                    <div id="header-${id}" class="accordion-header ${bgColor} p-5 flex items-center" onclick="toggleAccordion('${id}')">
+                        <h3 class="${titleColor} font-semibold flex items-center w-1/2 pr-2">
                             ${title}
                             <svg id="icon-${id}" class="w-4 h-4 ml-3 text-gray-600 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
                             </svg>
                         </h3>
-                        <div class="flex flex-col text-right">
-                            <span class="${titleColor} font-bold text-sm">Annual: ${annualDisplay}</span>
-                            <span class="${titleColor} font-bold text-xs text-gray-600">Monthly: ${monthlyDisplay}</span>
-                        </div>
+                        <span class="w-1/4 text-right ${titleColor} font-bold text-sm">
+                            ${annualDisplay}
+                        </span>
+                        <span class="w-1/4 text-right ${titleColor} font-bold text-sm">
+                            ${monthlyDisplay}
+                        </span>
                     </div>
 
                     <div id="content-${id}" class="accordion-content bg-white p-0">
@@ -945,17 +947,19 @@
 
                 return `
                     <div class="rounded-md shadow-sm overflow-hidden border border-${colorClass}-200">
-                        <div id="header-${id}" class="accordion-header ${bgColor} p-3 flex justify-between items-center" onclick="toggleAccordion('${id}')">
-                            <h4 class="${titleColor} font-semibold flex items-center">
+                        <div id="header-${id}" class="accordion-header ${bgColor} p-3 flex items-center" onclick="toggleAccordion('${id}')">
+                             <h4 class="${titleColor} font-semibold flex items-center w-1/2 pr-2">
                                 ${title}
                                 <svg id="icon-${id}" class="w-4 h-4 ml-2 text-gray-600 transform transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
                                 </svg>
                             </h4>
-                            <div class="flex flex-col text-right">
-                                <span class="${titleColor} font-bold text-sm">Annual: ${annualDisplay}</span>
-                                <span class="${titleColor} font-bold text-xs text-gray-600">Monthly: ${monthlyDisplay}</span>
-                            </div>
+                            <span class="w-1/4 text-right ${titleColor} font-bold text-sm">
+                                ${annualDisplay}
+                            </span>
+                             <span class="w-1/4 text-right ${titleColor} font-bold text-sm">
+                                ${monthlyDisplay}
+                            </span>
                         </div>
 
                         <div id="content-${id}" class="accordion-content bg-white p-0">
