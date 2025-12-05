@@ -49,7 +49,7 @@
         const PENSION_EMPLOYEE_RATE_AUTO = 0.08; // 8% of Pensionable Emoluments (Basic, Housing, Transport)
         
         // Employer Statutory Rates
-        const PENSION_EMPLOYER_RATE = 0.10; // 10% of Pensionable Emoluments
+        const PENSION_EMPLOYER_RATE = 0.10; // 10% of Pensionable Emoluments (BHT)
         const NHIS_EMPLOYER_RATE = 0.10; // 10% of Basic Salary
 
         const MONTHS_IN_YEAR = 12; 
@@ -318,25 +318,28 @@
             const pensionBase = basicSalary + housingAllowance + transportAllowance;
 
             // INDIVIDUAL MODE LOGIC - Auto-compute NHF, NHIS, Pension
+            // This is where employee NHF/NHIS/Pension is computed or zeroed out based on selection
             if (!isBulkMode) {
                 // NHF
                 if (data.nhfSelection === 'auto') {
                     nhf = basicSalary * NHF_EMPLOYEE_RATE_AUTO;
                 } else if (data.nhfSelection === 'none') {
                     nhf = 0;
-                }
+                } // else 'manual' uses the input nhf value
+
                 // NHIS
                 if (data.nhisSelection === 'auto') {
                     nhis = basicSalary * NHIS_EMPLOYEE_AUTO_RATE;
                 } else if (data.nhisSelection === 'none') {
                     nhis = 0;
-                }
+                } // else 'manual' uses the input nhis value
+
                 // Pension
                 if (data.pensionEmployeeSelection === 'auto') {
                     pensionEmployee = pensionBase * PENSION_EMPLOYEE_RATE_AUTO;
                 } else if (data.pensionEmployeeSelection === 'none') {
                     pensionEmployee = 0;
-                }
+                } // else 'manual' uses the input pensionEmployee value
             }
             // For bulk mode, nhf, nhis, pensionEmployee are treated as user input (manual/0)
             
@@ -400,9 +403,21 @@
             
             // --- EMPLOYER CONTRIBUTIONS & REMITTANCE ---
             const computedNhfEmployer = 0; // NHF is employee only
-            const computedPensionEmployer = pensionBase * PENSION_EMPLOYER_RATE;
-            const computedNhisEmployer = basicSalary * NHIS_EMPLOYER_RATE;
-            
+
+            let computedPensionEmployer = pensionBase * PENSION_EMPLOYER_RATE;
+            let computedNhisEmployer = basicSalary * NHIS_EMPLOYER_RATE;
+
+            // NEW LOGIC: If 'none' selected for employee contribution in Individual mode, zero out employer's contribution
+            if (!isBulkMode) {
+                 if (data.pensionEmployeeSelection === 'none') {
+                    computedPensionEmployer = 0;
+                 }
+                 if (data.nhisSelection === 'none') {
+                    computedNhisEmployer = 0;
+                 }
+                 // NHF has no employer contribution, so no check needed.
+            }
+
             // Total Remittance per fund (Employee + Employer portions)
             const totalPensionRemittance = pensionEmployee + computedPensionEmployer;
             const totalNhisRemittance = nhis + computedNhisEmployer;
@@ -431,6 +446,7 @@
                 taxableIncome, annualPAYE, annualNetSalary, 
                 
                 // Employer/Remittance
+                computedNhfEmployer,
                 computedPensionEmployer,
                 computedNhisEmployer,
                 totalNhfRemittance,
@@ -735,8 +751,6 @@
             const wb = XLSX.utils.book_new();
             
             const tempSheet = XLSX.utils.aoa_to_sheet(sheetData, { cellStyles: true });
-            // NOTE: Aesthetic formatting function (applyAestheticFormatting) is not included in the snippet
-            // for brevity, but a complete implementation would call it here.
             
             XLSX.utils.book_append_sheet(wb, tempSheet, "PIT Calculations");
             
@@ -1042,7 +1056,7 @@
                             <button onclick="toggleAllInputs(!allOptionalSelected && !allOptionalDeselected)"
                                 class="w-full py-2 px-4 rounded-lg text-sm font-medium transition-colors 
                                 ${allOptionalSelected ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-blue-500 text-white hover:bg-blue-600'}">
-                                ${allOptionalSelected ? 'Deselect All Optional Inputs (Set to 0/Auto)' : 'Select All Optional Inputs (Set to Manual/Checked)'}
+                                ${allOptionalSelected ? 'Deselect All Optional Inputs (Set to 0/None)' : 'Select All Optional Inputs (Set to Manual/Checked)'}
                             </button>
                             <p class="text-xs text-gray-500 mt-1">
                                 Unselected Allowances/Reliefs or 'None' statutory contributions will be treated as ₦0.
@@ -1207,6 +1221,158 @@
             `;
         }
 
+        // --- BULK UPLOAD RENDER FUNCTIONS ---
+        
+        function renderBulkInput() {
+            return `
+                <div class="max-w-3xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-6">
+                            <h2 class="text-3xl font-bold text-gray-800">📊 Bulk Payroll Calculation</h2>
+                            <p class="text-gray-600">Calculate PIT for multiple employees via an Excel/CSV file.</p>
+                        </div>
+                        
+                        <div class="mb-6">
+                             <label class="block text-sm font-semibold text-gray-800 mb-2">Input Data Frequency:</label>
+                            <div class="flex bg-gray-200 rounded-lg p-1">
+                                <button onclick="setBulkInputType('annual')"
+                                    class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${bulkInputType === 'annual' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-300'}">
+                                    Annual Figures in File
+                                </button>
+                                <button onclick="setBulkInputType('monthly')"
+                                    class="flex-1 py-2 rounded-lg text-sm font-medium transition-colors ${bulkInputType === 'monthly' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-300'}">
+                                    Monthly Figures in File
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="space-y-4">
+                            <button onclick="generateAndDownloadTemplate()" class="w-full bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                </svg>
+                                Download Input Template (.xlsx)
+                            </button>
+                            
+                            <label for="bulkFileInput" class="block text-sm font-medium text-gray-700">Upload your completed Excel/CSV file:</label>
+                            <input
+                                type="file"
+                                id="bulkFileInput"
+                                accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel"
+                                class="w-full p-4 border-2 border-dashed border-gray-300 rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors cursor-pointer"
+                                onchange="handleFileSelect(event)"
+                            >
+
+                            <button onclick="resetBulkCalculator()" class="w-full bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                Reset Upload
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderBulkResult() {
+            const totalEmployees = bulkResult.length;
+            
+            // Calculate grand totals for a summary
+            const grandTotals = bulkResult.reduce((acc, current) => {
+                acc.grossIncome += current.grossIncome;
+                acc.annualPAYE += current.annualPAYE;
+                acc.trueCashDeductions += current.trueCashDeductions;
+                acc.totalStatutoryRemittance += current.totalStatutoryRemittance;
+                acc.annualNetSalary += current.annualNetSalary;
+                return acc;
+            }, {
+                grossIncome: 0,
+                annualPAYE: 0,
+                trueCashDeductions: 0,
+                totalStatutoryRemittance: 0,
+                annualNetSalary: 0
+            });
+
+
+            return `
+                <div class="max-w-6xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-6">
+                            <h2 class="text-3xl font-bold text-gray-800">📊 Bulk Calculation Results</h2>
+                            <p class="text-gray-600">Processed ${totalEmployees} employee records.</p>
+                        </div>
+                        
+                        <div class="bg-green-50 p-6 rounded-lg mb-6 border border-green-200">
+                            <h3 class="text-xl font-bold text-green-800 mb-4">Summary for All Employees (Annual Totals)</h3>
+                            <div class="grid grid-cols-2 gap-4 text-sm font-medium">
+                                <div class="p-3 bg-white rounded-lg shadow-sm">
+                                    <p class="text-gray-500">Total Gross Income</p>
+                                    <p class="text-lg font-semibold text-gray-800">${formatCurrency(grandTotals.grossIncome)}</p>
+                                </div>
+                                <div class="p-3 bg-white rounded-lg shadow-sm">
+                                    <p class="text-gray-500">Total Annual PAYE</p>
+                                    <p class="text-lg font-semibold text-red-600">${formatCurrency(grandTotals.annualPAYE)}</p>
+                                </div>
+                                <div class="p-3 bg-white rounded-lg shadow-sm">
+                                    <p class="text-gray-500">Total Statutory Cash Deductions (Employee)</p>
+                                    <p class="text-lg font-semibold text-red-600">${formatCurrency(grandTotals.trueCashDeductions)}</p>
+                                </div>
+                                <div class="p-3 bg-yellow-100 rounded-lg shadow-md border-2 border-yellow-300">
+                                    <p class="text-yellow-800 font-bold">TOTAL STATUTORY REMITTANCE</p>
+                                    <p class="text-xl font-bold text-yellow-900">${formatCurrency(grandTotals.totalStatutoryRemittance)}</p>
+                                </div>
+                                <div class="p-3 bg-white rounded-lg shadow-sm">
+                                    <p class="text-gray-500">Total Annual Net Salary</p>
+                                    <p class="text-lg font-semibold text-green-600">${formatCurrency(grandTotals.annualNetSalary)}</p>
+                                </div>
+                                <div class="p-3 bg-white rounded-lg shadow-sm">
+                                    <p class="text-gray-500">Average Effective Tax Rate</p>
+                                    <p class="text-lg font-semibold text-gray-800">${formatPercentage(grandTotals.grossIncome > 0 ? grandTotals.annualPAYE / grandTotals.grossIncome : 0)}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-4">
+                            <button onclick="downloadBulkResult()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                                </svg>
+                                Download Full Data (.xlsx)
+                            </button>
+                            <button onclick="resetBulkCalculator()" class="flex-1 bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                Start New Bulk Upload
+                            </button>
+                        </div>
+                        
+                        <p class="mt-6 text-sm text-gray-600">Scroll down to view individual employee results.</p>
+
+                        <div class="mt-8 space-y-8">
+                            ${bulkResult.map((R, index) => `
+                                <div id="bulk-employee-${index}" class="bg-gray-50 p-5 rounded-xl border border-gray-200">
+                                    <div id="header-bulk-${index}" class="accordion-header flex justify-between items-center p-3 rounded-lg bg-gray-100 hover:bg-gray-200" onclick="toggleAccordion('bulk-${index}')">
+                                        <h4 class="text-lg font-semibold text-gray-800 w-1/3">
+                                            ${R.staffName || `Employee ${index + 1}`}
+                                        </h4>
+                                        <div class="w-1/3 text-center text-sm">
+                                            <span class="text-gray-500">Monthly Net:</span>
+                                            <span class="font-bold text-green-600">${formatCurrency(R.monthlyNetSalary)}</span>
+                                        </div>
+                                        <div class="w-1/3 text-right">
+                                            <svg id="icon-bulk-${index}" class="w-4 h-4 ml-3 text-gray-600 transform transition-transform duration-300 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M9 5l7 7-7 7"></path>
+                                            </svg>
+                                        </div>
+                                    </div>
+                                    <div id="content-bulk-${index}" class="accordion-content">
+                                        <div class="p-4 border-t border-gray-200 mt-2">
+                                            ${renderResult(R, true)}
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
 
         function render() {
             let content = '';
