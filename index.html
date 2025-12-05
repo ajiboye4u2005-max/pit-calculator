@@ -43,7 +43,13 @@
         const RENT_RELIEF_CAP = 500000;
         const RENT_RELIEF_RATE = 0.20;
         const NHF_RATE = 0.025; // 2.5% of Basic Salary
-        const PENSION_RATE = 0.08; // 8% of Pensionable Emoluments (Basic, Housing, Transport)
+        const PENSION_EMPLOYEE_RATE = 0.08; // 8% of Pensionable Emoluments (Basic, Housing, Transport)
+        
+        // NEW CONSTANTS
+        const NHIS_EMPLOYEE_AUTO_RATE = 0.05; // 5% of Basic Salary if auto-computed
+        const PENSION_EMPLOYER_RATE = 0.10; // 10% of Pensionable Emoluments
+        const NHIS_EMPLOYER_RATE = 0.10; // 10% of Basic Salary
+
         const MONTHS_IN_YEAR = 12; // Constant for monthly conversion
         
         const PIT_BRACKETS = [
@@ -57,9 +63,10 @@
 
         // The keys required for the calculation logic
         const INPUT_ALLOWANCE_KEYS = ['basicSalary', 'housingAllowance', 'transportAllowance', 'otherAllowances'];
-        const INPUT_DEDUCTION_KEYS = ['nhis', 'loanInterest', 'lifeInsurance', 'annualRent'];
-        const FINANCIAL_KEYS = [...INPUT_ALLOWANCE_KEYS, ...INPUT_DEDUCTION_KEYS];
-        
+        // MODIFIED: NHIS is now a selection option (manual or auto-compute)
+        const INPUT_DEDUCTION_KEYS = ['loanInterest', 'lifeInsurance', 'annualRent'];
+        const FINANCIAL_KEYS = [...INPUT_ALLOWANCE_KEYS, 'nhis', ...INPUT_DEDUCTION_KEYS]; // 'nhis' is kept for bulk upload
+
         const HR_KEYS = ['staffName', 'staffId', 'staffGrade'];
         const INPUT_KEYS = [...HR_KEYS, ...FINANCIAL_KEYS];
         
@@ -72,13 +79,13 @@
             "Housing Allowance",
             "Transportation Allowance",
             "Other Allowances",
-            "NHIS Contribution",
+            "NHIS Contribution", // Manual input for bulk
             "Loan Interest",
             "Life Insurance Premium",
             "Annual Rent Paid"
         ];
         
-        // Output Headers (Input and Calculated with Formulas) - Total 24 columns
+        // Output Headers (Input and Calculated with Formulas) - Total 29 columns (added 5 columns)
         const OUTPUT_HEADERS = [
             // HR Input columns (0, 1, 2) - Personal Data
             "Name of Staff", "Staff ID", "Grade of Staff", 
@@ -87,12 +94,12 @@
             // Computed Data (Starts here)
             "Gross Annual Income", // (7)
             // Deduction Inputs (8, 9, 10) - Input Data
-            "NHIS Contribution (Input)", 
+            "NHIS Contribution (Input/Employee)", 
             "Loan Interest (Input)", // Now a Relief
             "Life Insurance Premium (Input)", // Now a Relief
             // Computed Deductions (11, 12) - Computed Data
-            "NHF Contribution (=2.5%*Basic Salary)", 
-            "Pension Contribution (=8%*(Basic+Housing+Trans))", 
+            "NHF Contribution (Employee = 2.5%*Basic Salary)", 
+            "Pension Contribution (Employee = 8%*(Basic+Housing+Trans))", 
             // Remaining Deduction Input (13) - Input Data
             "Annual Rent Paid",
             // Final Annual Calculated columns (14, 15, 16, 17, 18) - Computed Data
@@ -102,12 +109,18 @@
             "Taxable Income", // (17)
             "Annual PAYE", // (18) <-- Terminology Change
             
-            // --- MONTHLY / RATE HEADERS (19-23) ---
-            "Gross Monthly Salary", // (19)
-            "Monthly Cash Deductions", // (20)
-            "Monthly PAYE Due", // (21) <-- Terminology Change
-            "Worker's Net Salary (Monthly)", // (22) <-- Terminology Change
-            "Effective Tax Rate (Annual PAYE / Annual Gross)", // (23)
+            // --- NEW EMPLOYER/REMITTANCE HEADERS (19-23) ---
+            "NHIS Contribution (Employer = 10%*Basic Salary)", // (19)
+            "Pension Contribution (Employer = 10%*(Basic+Housing+Trans))", // (20)
+            "Total NHIS Remitted (Employee+Employer)", // (21)
+            "Total Pension Remitted (Employee+Employer)", // (22)
+            
+            // --- MONTHLY / RATE HEADERS (24-27) ---
+            "Gross Monthly Salary", // (23)
+            "Monthly Cash Deductions", // (24)
+            "Monthly PAYE Due", // (25) <-- Terminology Change
+            "Worker's Net Salary (Monthly)", // (26) <-- Terminology Change
+            "Effective Tax Rate (Annual PAYE / Annual Gross)", // (27)
         ];
         
         // Mapping from Header (key in uploaded file) to internal JS key
@@ -125,24 +138,51 @@
             'Annual Rent Paid': 'annualRent'
         };
 
-        // Steps for individual input
+        // Steps for individual input - MODIFIED: only includes the input steps now
         const steps = [
-            { key: 'basicSalary', label: 'Basic Salary', placeholder: 'e.g., 2000000', hint: 'The core salary amount. Used to calculate NHF (2.5%) and part of the Pension base.' },
-            { key: 'housingAllowance', label: 'Housing Allowance', placeholder: 'e.g., 1500000', hint: 'Housing component of salary. Part of the Pension base.' },
-            { key: 'transportAllowance', label: 'Transportation Allowance', placeholder: 'e.g., 1000000', hint: 'Transport component of salary. Part of the Pension base.' },
-            { key: 'otherAllowances', label: 'Other Allowances', placeholder: 'Enter 0 if none', hint: 'Any other allowances/benefits. Sum of these four is the Gross Income.' },
-            { key: 'nhis', label: 'NHIS Contribution (National Health Insurance)', placeholder: 'Enter 0 if none', hint: 'Statutory cash deduction.' },
-            { key: 'loanInterest', label: 'Interest on Loan for Owner Occupied House', placeholder: 'Enter 0 if none', hint: 'Tax Relief (reduces taxable income only).' },
-            { key: 'lifeInsurance', label: 'Life Insurance Premium', placeholder: 'Enter 0 if none', hint: 'Tax Relief (reduces taxable income only).' },
-            { key: 'annualRent', label: 'Annual Rent Paid', placeholder: 'Enter 0 if none', hint: 'For Rent Relief calculation (Tax deduction only).' }
+             // The list of steps will be dynamically generated based on selection
         ];
+        
+        // Mapping for the Selection Step
+        const SELECTION_OPTIONS = [
+             // Allowances (All Mandatory for Gross Income, but user can set to 0)
+             { key: 'housingAllowance', label: 'Housing Allowance', group: 'allowances', mandatory: true, hint: 'Part of the Pension base.' },
+             { key: 'transportAllowance', label: 'Transportation Allowance', group: 'allowances', mandatory: true, hint: 'Part of the Pension base.' },
+             { key: 'otherAllowances', label: 'Other Allowances', group: 'allowances', mandatory: false, hint: 'Any other allowances/benefits.' },
+
+             // Deductions/Reliefs
+             { key: 'nhis', label: 'NHIS Contribution (Employee)', group: 'deductions', type: 'radio', options: [
+                 { value: 'auto', label: `Auto-Compute (${NHIS_EMPLOYEE_AUTO_RATE * 100}% of Basic Salary)` },
+                 { value: 'manual', label: 'Manual Input' },
+                 { value: 'none', label: 'None (Assumed 0)' }
+             ], selected: 'auto', hint: 'Statutory cash deduction.' },
+             { key: 'loanInterest', label: 'Loan Interest for Owner Occupied House', group: 'reliefs', hint: 'Tax Relief (reduces taxable income only).' },
+             { key: 'lifeInsurance', label: 'Life Insurance Premium', group: 'reliefs', hint: 'Tax Relief (reduces taxable income only).' },
+             { key: 'annualRent', label: 'Annual Rent Paid', group: 'reliefs', hint: 'For Rent Relief calculation (Tax deduction only).' }
+        ];
+
 
         // --- STATE ---
         let currentTab = 'individual';
         let inputType = 'annual'; // 'annual' or 'monthly' for individual
         let bulkInputType = 'annual'; // 'annual' or 'monthly' for bulk
-        let currentStep = 0;
+        let currentStep = -1; // -1 for initial selection, 0 to N for input steps
         let formData = {};
+        let inputSelection = {
+            // Default selections for manual input based on SELECTION_OPTIONS
+            // basicSalary is mandatory, will always be the first step
+            basicSalary: true,
+            // Allowances
+            housingAllowance: true,
+            transportAllowance: true,
+            otherAllowances: true,
+            // Deductions/Reliefs
+            nhis: 'auto', // 'auto', 'manual', or 'none'
+            loanInterest: true,
+            lifeInsurance: true,
+            annualRent: true,
+        };
+        let stepsToDisplay = []; // The dynamic array of steps for the form
         let result = null;
         let bulkResult = null;
         
@@ -200,14 +240,7 @@
 
         function switchInputType(type) {
             inputType = type;
-            currentStep = 0;
-            formData = {}; 
-            result = null;
-            render();
-            setTimeout(() => {
-                const input = document.getElementById('currentInput');
-                if (input) input.focus();
-            }, 100);
+            resetCalculator(); // Reset everything
         }
         
         function setBulkInputType(type) {
@@ -216,7 +249,7 @@
         }
 
         // --- CORE CALCULATION LOGIC (Reused for both individual and bulk) ---
-        function calculatePITForEmployee(data) {
+        function calculatePITForEmployee(data, isBulkMode = false) {
             const staffName = data.staffName || '';
             const staffId = data.staffId || '';
             const staffGrade = data.staffGrade || '';
@@ -227,7 +260,16 @@
             const transportAllowance = parseFloat(data.transportAllowance) || 0;
             const otherAllowances = parseFloat(data.otherAllowances) || 0;
             
-            const nhis = parseFloat(data.nhis) || 0;
+            let nhis = parseFloat(data.nhis) || 0; // Starts as input for bulk or manual
+            
+            // INDIVIDUAL MODE LOGIC - Auto-compute NHIS
+            if (!isBulkMode && data.nhisSelection === 'auto') {
+                nhis = basicSalary * NHIS_EMPLOYEE_AUTO_RATE;
+            } else if (!isBulkMode && data.nhisSelection === 'none') {
+                nhis = 0;
+            }
+            // For bulk mode, nhis is the user input and treated as manual
+
             const loanInterest = parseFloat(data.loanInterest) || 0;
             const lifeInsurance = parseFloat(data.lifeInsurance) || 0;
             const annualRent = parseFloat(data.annualRent) || 0;
@@ -235,13 +277,13 @@
             // 1. Calculate Gross Annual Income
             const grossIncome = basicSalary + housingAllowance + transportAllowance + otherAllowances;
             
-            // 2. Statutory Contributions (Computed)
+            // 2. Statutory Employee Contributions (Computed)
             const computedNhf = basicSalary * NHF_RATE; 
             const pensionBase = basicSalary + housingAllowance + transportAllowance;
-            const computedPension = pensionBase * PENSION_RATE; 
-
+            const computedPensionEmployee = pensionBase * PENSION_EMPLOYEE_RATE; 
+            
             // 3. True Cash Deductions (For Net Salary) - Only NHF, Pension, NHIS are cash deductions
-            const trueCashDeductions = computedNhf + computedPension + nhis; 
+            const trueCashDeductions = computedNhf + computedPensionEmployee + nhis; 
             
             // 4. Tax Reliefs (For Taxable Income Reduction)
             const calculatedRentRelief = annualRent * RENT_RELIEF_RATE;
@@ -259,7 +301,7 @@
             
             // 7. Progressive Tax Calculation (PAYE)
             let remainingTaxable = taxableIncome;
-            let annualPAYE = 0; // Renamed from taxPayable
+            let annualPAYE = 0; 
             const bandDetails = [];
 
             for (const bracket of PIT_BRACKETS) {
@@ -290,24 +332,33 @@
             }
             
             // 8. Calculate Net Annual Salary (Cash Flow)
-            // FIX: Gross Income - True Cash Deductions - Annual PAYE
+            // Gross Income - True Cash Deductions - Annual PAYE
             const annualNetSalary = grossIncome - trueCashDeductions - annualPAYE;
+            
+            
+            // --- NEW: EMPLOYER CONTRIBUTIONS & REMITTANCE ---
+            const computedNhfEmployer = 0; // NHF is employee only
+            const computedPensionEmployer = pensionBase * PENSION_EMPLOYER_RATE;
+            const computedNhisEmployer = basicSalary * NHIS_EMPLOYER_RATE;
+            
+            const totalPensionRemittance = computedPensionEmployee + computedPensionEmployer;
+            const totalNhisRemittance = nhis + computedNhisEmployer;
             
             // --- MONTHLY CALCULATIONS ---
             const grossMonthly = grossIncome / MONTHS_IN_YEAR;
             const monthlyDeductions = trueCashDeductions / MONTHS_IN_YEAR; // Monthly True Cash Deductions
-            const monthlyPAYE = annualPAYE / MONTHS_IN_YEAR; // Renamed from monthlyTax
-            const monthlyNetSalary = annualNetSalary / MONTHS_IN_YEAR; // Renamed from monthlyTakeHome
+            const monthlyPAYE = annualPAYE / MONTHS_IN_YEAR; 
+            const monthlyNetSalary = annualNetSalary / MONTHS_IN_YEAR; 
             const effectiveTaxRate = grossIncome > 0 ? annualPAYE / grossIncome : 0;
 
             return {
                 ...data, // Include all input data for display/drill-down
-                basicSalary, housingAllowance, transportAllowance, otherAllowances, annualRent, 
+                basicSalary, housingAllowance, transportAllowance, otherAllowances, annualRent, nhis,
                 grossIncome, 
                 
-                // Deduction Components
+                // Employee Deduction Components
                 computedNhf, 
-                computedPension, 
+                computedPensionEmployee, 
                 trueCashDeductions, // Total Cash Deductions for Net Salary
                 loanInterest, // For display in Reliefs section
                 lifeInsurance, // For display in Reliefs section
@@ -317,14 +368,20 @@
                 
                 // Final Annual Results
                 taxableIncome,
-                annualPAYE, // Renamed
-                annualNetSalary, // Renamed
+                annualPAYE, 
+                annualNetSalary, 
+                
+                // NEW: Employer/Remittance
+                computedPensionEmployer,
+                computedNhisEmployer,
+                totalPensionRemittance,
+                totalNhisRemittance,
                 
                 // Monthly Fields
                 grossMonthly,
                 monthlyDeductions, // True cash deductions, monthly
-                monthlyPAYE, // Renamed
-                monthlyNetSalary, // Renamed
+                monthlyPAYE, 
+                monthlyNetSalary, 
                 effectiveTaxRate,
 
                 bandDetails
@@ -338,17 +395,95 @@
                 ...formData, 
                 staffName: 'Individual Calculation', 
                 staffId: 'N/A', 
-                staffGrade: 'N/A' 
+                staffGrade: 'N/A',
+                nhisSelection: inputSelection.nhis // Pass the NHIS computation method
             };
-            result = calculatePITForEmployee(employeeData);
+            result = calculatePITForEmployee(employeeData, false);
             render();
+        }
+        
+        // NEW: Function to set the dynamic steps and move to the first input step
+        function proceedToInput() {
+            // 1. Reset dynamic steps
+            stepsToDisplay = [];
+            
+            // 2. Basic Salary is always the first step
+            stepsToDisplay.push({ 
+                key: 'basicSalary', 
+                label: 'Basic Salary', 
+                placeholder: 'e.g., 2000000', 
+                hint: 'The core salary amount. Used to calculate NHF (2.5%), and the base for Pension and NHIS.'
+            });
+
+            // 3. Add selected steps for Allowances
+            SELECTION_OPTIONS.filter(opt => opt.group === 'allowances').forEach(opt => {
+                if (inputSelection[opt.key] === true) {
+                    stepsToDisplay.push({
+                        key: opt.key, 
+                        label: opt.label, 
+                        placeholder: `Enter 0 if no ${opt.label.toLowerCase()}`, 
+                        hint: opt.hint
+                    });
+                } else {
+                     formData[opt.key] = 0; // Set unselected allowances to 0
+                }
+            });
+            
+            // 4. Add selected steps for Deductions/Reliefs
+            SELECTION_OPTIONS.filter(opt => opt.group === 'reliefs' || opt.key === 'nhis').forEach(opt => {
+                if (opt.key === 'nhis') {
+                    if (inputSelection.nhis === 'manual') {
+                         stepsToDisplay.push({
+                            key: 'nhis', 
+                            label: 'NHIS Contribution (Employee - Manual)', 
+                            placeholder: 'Enter contribution amount', 
+                            hint: 'Statutory cash deduction. If left at 0, system will treat it as 0.'
+                        });
+                    } else {
+                        formData['nhis'] = 0; // nhis will be calculated later or remain 0 if selection is 'none'
+                    }
+                } else if (inputSelection[opt.key] === true) {
+                    stepsToDisplay.push({
+                        key: opt.key, 
+                        label: opt.label, 
+                        placeholder: `Enter 0 if no ${opt.label.toLowerCase()}`, 
+                        hint: opt.hint
+                    });
+                } else {
+                    formData[opt.key] = 0; // Set unselected deductions to 0
+                }
+            });
+            
+            // Move to the first step
+            currentStep = 0;
+            render();
+            setTimeout(() => {
+                const input = document.getElementById('currentInput');
+                if (input) input.focus();
+            }, 100);
+        }
+        
+        // NEW: Function to update the selection state
+        function updateSelection(key, value) {
+             inputSelection[key] = value;
+             render(); // Re-render to reflect state if needed
         }
 
         function handleNext() {
+            // If we are at the selection step
+            if (currentStep === -1) {
+                // Ensure Basic Salary input is possible (not strictly necessary but good safeguard)
+                // Basic salary is the only mandatory input step.
+                // It will be the first step in stepsToDisplay.
+                proceedToInput();
+                return;
+            }
+            
+            // If we are at an input step
             const input = document.getElementById('currentInput');
             const valueStr = input.value.replace(/,/g, '');
             const value = parseFloat(valueStr || '0');
-            const currentStepKey = steps[currentStep].key;
+            const currentStepKey = stepsToDisplay[currentStep].key;
 
             if (isNaN(value) || value < 0) {
                 alert('Please enter a valid positive number');
@@ -363,7 +498,7 @@
             const annualValue = inputType === 'monthly' ? value * MONTHS_IN_YEAR : value;
             formData[currentStepKey] = annualValue;
 
-            if (currentStep < steps.length - 1) {
+            if (currentStep < stepsToDisplay.length - 1) {
                 currentStep++;
                 render();
                 setTimeout(() => {
@@ -383,19 +518,30 @@
                     const prevInput = document.getElementById('currentInput');
                     if (prevInput) prevInput.focus();
                 }, 100);
+            } else if (currentStep === 0) {
+                 // Go back to the selection screen
+                 currentStep = -1;
+                 render();
             }
         }
 
         function resetCalculator() {
-            currentStep = 0;
+            currentStep = -1; // Back to selection step
             formData = {};
+            stepsToDisplay = [];
             result = null;
             inputType = 'annual'; 
+            inputSelection = { // Reset selection as well
+                basicSalary: true,
+                housingAllowance: true,
+                transportAllowance: true,
+                otherAllowances: true,
+                nhis: 'auto',
+                loanInterest: true,
+                lifeInsurance: true,
+                annualRent: true,
+            };
             render();
-            setTimeout(() => {
-                const input = document.getElementById('currentInput');
-                if (input) input.focus();
-            }, 100);
         }
 
         // --- BULK UPLOAD LOGIC ---
@@ -403,7 +549,7 @@
         function generateAndDownloadTemplate() {
             const sheetData = [
                 TEMPLATE_HEADERS,
-                ["John Doe", "A1001", "Senior", 2000000, 1500000, 1000000, 500000, 0, 0, 0, 0]
+                ["John Doe", "A1001", "Senior", 2000000, 1500000, 1000000, 500000, 100000, 50000, 50000, 200000]
             ];
             
             const ws = XLSX.utils.aoa_to_sheet(sheetData);
@@ -463,7 +609,8 @@
                     const requiredAllowancePresent = INPUT_ALLOWANCE_KEYS.every(key => key in employee);
                     if (requiredAllowancePresent) {
                          if (employee.basicSalary >= 0) { // Allow 0 basic salary, although results will be 0
-                            return calculatePITForEmployee(employee);
+                            // Bulk mode: NHIS is treated as the input value (employee.nhis)
+                            return calculatePITForEmployee(employee, true); 
                          }
                     }
                     return null;
@@ -492,10 +639,10 @@
             const COL_HR_END = 2; 
             const COL_INPUT_END = 13; 
             const COL_FINANCIAL_START = 3; 
-            const COL_TAXABLE_INCOME = 17; 
-            const COL_PAYE = 18; 
-            const COL_MONTHLY_NET_SALARY = 22; 
-            const COL_RATE = 23; 
+            const COL_PAYE_START = 18; 
+            const COL_EMPLOYER_START = 19;
+            const COL_REMITTANCE_START = 21;
+            const COL_RATE = 27; 
             
             for (let R = headerRow + 1; R <= range.e.r; ++R) {
                 for (let C = COL_FINANCIAL_START; C <= range.e.c; ++C) {
@@ -530,57 +677,87 @@
                 fill: { fgColor: { rgb: "CCEECC" } }, 
                 border: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER }
             };
+            
+             const remittanceStyle = { 
+                font: { bold: true, color: { rgb: "333333" } },
+                fill: { fgColor: { rgb: "FFF2CC" } }, // Light Orange/Yellow
+                border: { top: THIN_BORDER, bottom: THIN_BORDER, left: THIN_BORDER, right: THIN_BORDER }
+            };
 
             for (let R = headerRow + 1; R <= range.e.r; ++R) {
+                // Style for the primary input columns (3 to 6)
                 for (let C = COL_FINANCIAL_START; C <= 6; ++C) {
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
                     if (!ws[cellAddress].s) ws[cellAddress].s = {};
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
                 }
                 
-                let grossIncomeAddr = XLSX.utils.encode_cell({ c: 7, r: R });
-                if (!ws[grossIncomeAddr].s) ws[grossIncomeAddr].s = {};
-                ws[grossIncomeAddr].s = { ...ws[grossIncomeAddr].s, ...outputStyle };
-                
+                // Style for the secondary input columns (8, 9, 10, 13)
                 [8, 9, 10, 13].forEach(C => {
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
                     if (!ws[cellAddress].s) ws[cellAddress].s = {};
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...inputStyle };
                 });
-
+                
+                // Style for all other output columns (7, 11, 12, 14, 15, 16, 17, 18, 23, 24, 25, 26, 27)
                 for (let C = 7; C <= range.e.c; ++C) {
-                    if ([8, 9, 10, 13].includes(C)) continue; 
+                    if ([8, 9, 10, 13].includes(C) || C >= COL_REMITTANCE_START) continue; 
 
                     const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
                     if (!ws[cellAddress].s) ws[cellAddress].s = {};
                     ws[cellAddress].s = { ...ws[cellAddress].s, ...outputStyle };
                 }
+                
+                // Style for Remittance columns (21, 22)
+                 for (let C = COL_REMITTANCE_START; C <= 22; ++C) {
+                    const cellAddress = XLSX.utils.encode_cell({ c: C, r: R });
+                    if (!ws[cellAddress].s) ws[cellAddress].s = {};
+                    ws[cellAddress].s = { ...ws[cellAddress].s, ...remittanceStyle };
+                }
 
-                let taxableIncomeAddr = XLSX.utils.encode_cell({ c: COL_TAXABLE_INCOME, r: R });
+                // Special Style for final results (Taxable Income, PAYE, Monthly Net)
+                let taxableIncomeAddr = XLSX.utils.encode_cell({ c: 17, r: R });
                 if (!ws[taxableIncomeAddr].s) ws[taxableIncomeAddr].s = {};
                 ws[taxableIncomeAddr].s = { ...ws[taxableIncomeAddr].s, ...finalResultStyle };
 
-                let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_PAYE, r: R });
+                let taxPayableAddr = XLSX.utils.encode_cell({ c: COL_PAYE_START, r: R });
                 if (!ws[taxPayableAddr].s) ws[taxPayableAddr].s = {};
                 ws[taxPayableAddr].s = { ...ws[taxPayableAddr].s, ...finalResultStyle };
 
-                let takeHomeAddr = XLSX.utils.encode_cell({ c: COL_MONTHLY_NET_SALARY, r: R });
-                if (!ws[takeHomeAddr].s) ws[takeHomeAddr].s = {};
-                ws[takeHomeAddr].s = { ...ws[takeHomeAddr].s, ...finalResultStyle };
+                let takeHomeAddr = XLSX.utils.encode_cell({ c: 26, r: R });
+                if (!ws[takeHomeAddr].s) ws[taxPayableAddr].s = {};
+                ws[takeHomeAddr].s = { ...ws[taxPayableAddr].s, ...finalResultStyle };
             }
 
+            // Thick borders for section separation
             for (let R = headerRow; R <= range.e.r; ++R) {
+                // After HR columns
                 let cellAddr1 = XLSX.utils.encode_cell({ c: COL_HR_END, r: R });
                 if (!ws[cellAddr1]) ws[cellAddr1] = {};
                 if (!ws[cellAddr1].s) ws[cellAddr1].s = {};
                 if (!ws[cellAddr1].s.border) ws[cellAddr1].s.border = {};
                 ws[cellAddr1].s.border.right = THICK_BORDER;
 
+                // After Employee Deductions/Reliefs columns
                 let cellAddr2 = XLSX.utils.encode_cell({ c: COL_INPUT_END, r: R });
                 if (!ws[cellAddr2]) ws[cellAddr2] = {};
                 if (!ws[cellAddr2].s) ws[cellAddr2].s = {};
                 if (!ws[cellAddr2].s.border) ws[cellAddr2].s.border = {};
                 ws[cellAddr2].s.border.right = THICK_BORDER;
+                
+                // After PAYE column
+                 let cellAddr3 = XLSX.utils.encode_cell({ c: COL_PAYE_START, r: R });
+                if (!ws[cellAddr3]) ws[cellAddr3] = {};
+                if (!ws[cellAddr3].s) ws[cellAddr3].s = {};
+                if (!ws[cellAddr3].s.border) ws[cellAddr3].s.border = {};
+                ws[cellAddr3].s.border.right = THICK_BORDER;
+                
+                // After Employer Contribution columns
+                 let cellAddr4 = XLSX.utils.encode_cell({ c: 20, r: R });
+                if (!ws[cellAddr4]) ws[cellAddr4] = {};
+                if (!ws[cellAddr4].s) ws[cellAddr4].s = {};
+                if (!ws[cellAddr4].s.border) ws[cellAddr4].s.border = {};
+                ws[cellAddr4].s.border.right = THICK_BORDER;
             }
 
             const columnWidths = OUTPUT_HEADERS.map((header, index) => {
@@ -588,7 +765,7 @@
                 if (index >= COL_FINANCIAL_START) {
                     w = Math.max(w, 20); 
                 }
-                if (index === 7 || index === 11 || index === 12 || index === 14 || index === 15 || index === 19 || index === 20 || index === 21 || index === 22 || index === 23) {
+                if (index === 7 || index === 11 || index === 12 || index === 14 || index === 15 || index === 16 || index === 19 || index === 20 || index === 21 || index === 22 || index === 23 || index === 24 || index === 25 || index === 26 || index === 27) {
                     w = Math.max(w, 35);
                 }
                 return { wch: w };
@@ -613,12 +790,12 @@
                 // Computed Gross Income (7)
                 res.grossIncome, 
                 // Deduction Inputs (8, 9, 10)
-                res.nhis,
+                res.nhis, // Employee NHIS
                 res.loanInterest,
                 res.lifeInsurance,
-                // Computed Deductions (11, 12)
+                // Computed Employee Deductions (11, 12)
                 res.computedNhf, 
-                res.computedPension, 
+                res.computedPensionEmployee, 
                 // Remaining Deduction Input (13)
                 res.annualRent,
                 // Calculated columns (14, 15, 16, 17, 18)
@@ -628,12 +805,18 @@
                 res.taxableIncome,
                 res.annualPAYE, // Renamed (18)
                 
-                // --- NEW FIELDS (19-23) ---
-                res.grossMonthly, // (19)
-                res.monthlyDeductions, // (20)
-                res.monthlyPAYE, // Renamed (21)
-                res.monthlyNetSalary, // Renamed (22)
-                res.effectiveTaxRate // (23)
+                // --- NEW EMPLOYER/REMITTANCE FIELDS (19-22) ---
+                res.computedNhisEmployer, // (19)
+                res.computedPensionEmployer, // (20)
+                res.totalNhisRemittance, // (21)
+                res.totalPensionRemittance, // (22)
+                
+                // --- MONTHLY FIELDS (23-27) ---
+                res.grossMonthly, // (23)
+                res.monthlyDeductions, // (24)
+                res.monthlyPAYE, // Renamed (25)
+                res.monthlyNetSalary, // Renamed (26)
+                res.effectiveTaxRate // (27)
             ]);
 
             const sheetData = [OUTPUT_HEADERS, ...outputData];
@@ -743,18 +926,18 @@
                 </div>
             `;
             
-            // 2. Statutory Cash Deductions Breakdown (Now only NHF, Pension, NHIS)
+            // 2. Statutory Cash Deductions Breakdown (Employee)
             const statutoryDeductionsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPensionEmployee, R.computedPensionEmployee / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (Employee)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.trueCashDeductions, R.monthlyDeductions, true)}
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions (Employee)', R.trueCashDeductions, R.monthlyDeductions, true)}
                 </div>
             `;
             
-            // 3. Tax Reliefs Breakdown (Now includes Loan Interest and Life Insurance)
+            // 3. Tax Reliefs Breakdown
             const reliefsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     <p class="text-sm text-gray-500 mb-2">These reduce Taxable Income (used for PAYE calculation):</p>
@@ -787,15 +970,43 @@
                             </span>
                         </div>
                     `).join('')}
+                    <div class="bg-red-100 rounded p-3 flex justify-between font-semibold text-base border-t border-red-200 mt-4">
+                        <span>TOTAL ANNUAL PAYE:</span>
+                        <span class="text-red-700">${formatCurrency(R.annualPAYE)}</span>
+                    </div>
                 </div>
             `;
             
-            // 5. Net Salary Computation Breakdown (No Annual/Monthly breakdown table header)
+            // NEW: 5. Employer Contribution Breakdown
+             const employerContributionBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    ${renderAnnualMonthlyRow('Pension Contribution (10% of Emoluments)', R.computedPensionEmployer, R.computedPensionEmployer / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (10% of Basic)', R.computedNhisEmployer, R.computedNhisEmployer / MONTHS_IN_YEAR)}
+                    <p class="mt-2 text-xs text-blue-600">Note: This is the employer's cost and is not deducted from the employee's salary.</p>
+                </div>
+            `;
+            
+             // NEW: 6. Total Government Remittance Breakdown
+             const totalRemittanceBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    <div class="bg-yellow-50 rounded p-3 font-medium">
+                        <h4 class="font-semibold text-gray-700 mb-2">Pension (Employee 8% + Employer 10%)</h4>
+                        ${renderAnnualMonthlyRow('Total Annual Pension Remittance', R.totalPensionRemittance, R.totalPensionRemittance / MONTHS_IN_YEAR, true)}
+                    </div>
+                    <div class="bg-yellow-50 rounded p-3 font-medium">
+                         <h4 class="font-semibold text-gray-700 mb-2">NHIS (Employee + Employer 10%)</h4>
+                        ${renderAnnualMonthlyRow('Total Annual NHIS Remittance', R.totalNhisRemittance, R.totalNhisRemittance / MONTHS_IN_YEAR, true)}
+                    </div>
+                </div>
+            `;
+
+
+            // 7. Net Salary Computation Breakdown (No Annual/Monthly breakdown table header)
             const netSalaryBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
                     ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions (Sect. 2)', R.trueCashDeductions * -1, R.monthlyDeductions * -1)}
-                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
+                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax (Sect. 4)', R.annualPAYE * -1, R.monthlyPAYE * -1)}
                 </div>
             `;
 
@@ -817,16 +1028,21 @@
                             
                             ${renderAccordionItem('gross', '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
 
-                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions (For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
+                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions (Employee - For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
                             
                             ${renderAccordionItem('reliefs', '3. Total Tax Reliefs', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
 
                             ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown, false, true)}
+                            
+                            ${renderAccordionItem('employer', '5. Employer Statutory Contributions (Cost to Company)', R.computedPensionEmployer + R.computedNhisEmployer, 'indigo', employerContributionBreakdown)}
 
-                            ${renderAccordionItem('netsalary', '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
+                            ${renderAccordionItem('remittance', '6. Total Government Remittance (Employee + Employer)', R.totalPensionRemittance + R.totalNhisRemittance, 'yellow', totalRemittanceBreakdown)}
+
+
+                            ${renderAccordionItem('netsalary', '7. NET SALARY (Worker\'s Monthly Take Home)', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
 
                             <div class="bg-indigo-50 rounded-lg p-5 flex justify-between font-bold text-lg border border-indigo-200">
-                                <span>6. Effective Tax Rate (Annual PAYE / Annual Gross):</span>
+                                <span>8. Effective Tax Rate (Annual PAYE / Annual Gross):</span>
                                 <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
                             </div>
 
@@ -872,14 +1088,14 @@
                 </div>
             `;
             
-            // 2. Statutory Cash Deductions Breakdown
+            // 2. Statutory Cash Deductions Breakdown (Employee)
             const statutoryDeductionsBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('NHF Contribution (2.5% of Basic)', R.computedNhf, R.computedNhf / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPension, R.computedPension / MONTHS_IN_YEAR)}
-                    ${renderAnnualMonthlyRow('NHIS Contribution (Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('Pension Contribution (8% of Emoluments)', R.computedPensionEmployee, R.computedPensionEmployee / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (Employee Input)', R.nhis, R.nhis / MONTHS_IN_YEAR)}
                     <div class="border-t border-dashed border-gray-300 my-3"></div>
-                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions', R.trueCashDeductions, R.monthlyDeductions, true)}
+                    ${renderAnnualMonthlyRow('Total Statutory Cash Deductions (Employee)', R.trueCashDeductions, R.monthlyDeductions, true)}
                 </div>
             `;
             
@@ -916,19 +1132,47 @@
                             </span>
                         </div>
                     `).join('')}
+                    <div class="bg-red-100 rounded p-3 flex justify-between font-semibold text-base border-t border-red-200 mt-4">
+                        <span>TOTAL ANNUAL PAYE:</span>
+                        <span class="text-red-700">${formatCurrency(R.annualPAYE)}</span>
+                    </div>
                 </div>
             `;
             
-            // 5. Net Salary Computation Breakdown
+            // 5. Employer Contribution Breakdown
+             const employerContributionBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    ${renderAnnualMonthlyRow('Pension Contribution (10% of Emoluments)', R.computedPensionEmployer, R.computedPensionEmployer / MONTHS_IN_YEAR)}
+                    ${renderAnnualMonthlyRow('NHIS Contribution (10% of Basic)', R.computedNhisEmployer, R.computedNhisEmployer / MONTHS_IN_YEAR)}
+                    <p class="mt-2 text-xs text-blue-600">Note: This is the employer's cost and is not deducted from the employee's salary.</p>
+                </div>
+            `;
+            
+             // 6. Total Government Remittance Breakdown
+             const totalRemittanceBreakdown = `
+                <div class="space-y-2 text-gray-700">
+                    <div class="bg-yellow-50 rounded p-3 font-medium">
+                        <h4 class="font-semibold text-gray-700 mb-2">Pension (Employee 8% + Employer 10%)</h4>
+                        ${renderAnnualMonthlyRow('Total Annual Pension Remittance', R.totalPensionRemittance, R.totalPensionRemittance / MONTHS_IN_YEAR, true)}
+                    </div>
+                    <div class="bg-yellow-50 rounded p-3 font-medium">
+                         <h4 class="font-semibold text-gray-700 mb-2">NHIS (Employee + Employer 10%)</h4>
+                        ${renderAnnualMonthlyRow('Total Annual NHIS Remittance', R.totalNhisRemittance, R.totalNhisRemittance / MONTHS_IN_YEAR, true)}
+                    </div>
+                </div>
+            `;
+
+
+            // 7. Net Salary Computation Breakdown
             const netSalaryBreakdown = `
                 <div class="space-y-2 text-gray-700">
                     ${renderAnnualMonthlyRow('Gross Annual Income', R.grossIncome, R.grossMonthly)}
                     ${renderAnnualMonthlyRow('(-) Total Statutory Cash Deductions (Sect. 2)', R.trueCashDeductions * -1, R.monthlyDeductions * -1)}
-                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax', R.annualPAYE * -1, R.monthlyPAYE * -1)}
+                    ${renderAnnualMonthlyRow('(-) Annual PAYE Tax (Sect. 4)', R.annualPAYE * -1, R.monthlyPAYE * -1)}
                 </div>
             `;
             
-            // Inline Accordion Item Helper (Simplified for bulk view) (Modified to support hiding the breakdown table header)
+            // Inline Accordion Item Helper (Simplified for bulk view)
             function renderInlineAccordionItem(id, title, totalAnnualAmount, colorClass, breakdownHtml, isFinal=false, isCalculationBreakdown=false) {
                 const annualDisplay = formatCurrency(totalAnnualAmount);
                 const monthlyDisplay = formatCurrency(totalAnnualAmount / MONTHS_IN_YEAR);
@@ -977,10 +1221,12 @@
                     <h3 class="text-xl font-bold text-gray-700">Detailed Breakdown for ${R.staffName || 'Employee'}</h3>
                     
                     ${renderInlineAccordionItem(`bulk-gross-${index}`, '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
-                    ${renderInlineAccordionItem(`bulk-statutory-${index}`, '2. Statutory Cash Deductions (For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-statutory-${index}`, '2. Employee Cash Deductions', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
                     ${renderInlineAccordionItem(`bulk-reliefs-${index}`, '3. Total Tax Reliefs', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
                     ${renderInlineAccordionItem(`bulk-paye-${index}`, '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown, false, true)}
-                    ${renderInlineAccordionItem(`bulk-netsalary-${index}`, '5. NET SALARY (Cash Flow)', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
+                    ${renderInlineAccordionItem(`bulk-employer-${index}`, '5. Employer Statutory Contributions', R.computedPensionEmployer + R.computedNhisEmployer, 'indigo', employerContributionBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-remittance-${index}`, '6. Total Government Remittance', R.totalPensionRemittance + R.totalNhisRemittance, 'yellow', totalRemittanceBreakdown)}
+                    ${renderInlineAccordionItem(`bulk-netsalary-${index}`, '7. NET SALARY', R.annualNetSalary, 'green', netSalaryBreakdown, true, true)}
 
                     <div class="bg-indigo-100 rounded-lg p-3 flex justify-between font-bold text-base border border-indigo-200">
                         <span>Effective Tax Rate:</span>
@@ -1131,21 +1377,16 @@
             `;
         }
 
-
-        function renderForm() {
-            const step = steps[currentStep];
-            const progress = ((currentStep + 1) / steps.length) * 100;
-            const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
-            const suffix = inputType === 'annual' ? '' : ` (x${MONTHS_IN_YEAR} for Annual Output)`;
-
+        // NEW: Renders the selection step
+        function renderSelectionStep() {
             return `
-                <div class="max-w-2xl mx-auto">
+                 <div class="max-w-2xl mx-auto">
                     <div class="bg-white rounded-2xl shadow-xl p-8">
                         <div class="text-center mb-8">
                             <h1 class="text-3xl font-bold text-gray-800 mb-2">
                                 Nigeria PIT Calculator
                             </h1>
-                            <p class="text-gray-600">Personal Income Tax Estimation Tool</p>
+                            <p class="text-gray-600">Step 1: Customize Input Fields</p>
                         </div>
                         
                         <div class="mb-6">
@@ -1162,10 +1403,115 @@
                             </div>
                         </div>
 
+                        <div class="space-y-6">
+                            <div class="bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                <p class="font-semibold text-gray-800 mb-2">1. Allowance Selection (Optional Input)</p>
+                                <div class="space-y-3">
+                                    ${SELECTION_OPTIONS.filter(opt => opt.group === 'allowances').map(opt => `
+                                        <div class="flex items-center justify-between">
+                                            <label class="text-gray-700 font-medium w-3/4">
+                                                ${opt.label}
+                                                <p class="text-xs text-gray-500">${opt.hint}</p>
+                                            </label>
+                                            <input type="checkbox" id="${opt.key}" ${inputSelection[opt.key] === true ? 'checked' : ''}
+                                                onchange="updateSelection('${opt.key}', this.checked)"
+                                                class="h-5 w-5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                                        </div>
+                                    `).join('')}
+                                </div>
+                            </div>
+
+                            <div class="bg-orange-50 p-4 rounded-lg border border-orange-200">
+                                <p class="font-semibold text-gray-800 mb-2">2. Deduction/Relief Selection (Optional Input)</p>
+                                <div class="space-y-3">
+                                    ${SELECTION_OPTIONS.filter(opt => opt.group === 'reliefs' || opt.key === 'nhis').map(opt => {
+                                        if (opt.type === 'radio') {
+                                            // NHIS radio group
+                                            return `
+                                                <div>
+                                                    <label class="block text-gray-700 font-medium mb-1">${opt.label}:</label>
+                                                    <div class="flex space-x-4">
+                                                        ${opt.options.map(radioOpt => `
+                                                            <div class="flex items-center">
+                                                                <input id="${opt.key}-${radioOpt.value}" name="${opt.key}" type="radio" value="${radioOpt.value}" 
+                                                                    ${inputSelection[opt.key] === radioOpt.value ? 'checked' : ''}
+                                                                    onchange="updateSelection('${opt.key}', this.value)"
+                                                                    class="h-4 w-4 text-green-600 border-gray-300 focus:ring-green-500">
+                                                                <label for="${opt.key}-${radioOpt.value}" class="ml-2 text-sm text-gray-700">
+                                                                    ${radioOpt.label}
+                                                                </label>
+                                                            </div>
+                                                        `).join('')}
+                                                    </div>
+                                                    <p class="text-xs text-gray-500 mt-1">${opt.hint}</p>
+                                                </div>
+                                            `;
+                                        } else {
+                                            // Standard checkbox for other reliefs
+                                            return `
+                                                <div class="flex items-center justify-between">
+                                                    <label class="text-gray-700 font-medium w-3/4">
+                                                        ${opt.label}
+                                                        <p class="text-xs text-gray-500">${opt.hint}</p>
+                                                    </label>
+                                                    <input type="checkbox" id="${opt.key}" ${inputSelection[opt.key] === true ? 'checked' : ''}
+                                                        onchange="updateSelection('${opt.key}', this.checked)"
+                                                        class="h-5 w-5 text-green-600 border-gray-300 rounded focus:ring-green-500">
+                                                </div>
+                                            `;
+                                        }
+                                    }).join('<div class="border-t border-gray-200 my-3"></div>')}
+                                </div>
+                            </div>
+
+
+                            <button onclick="handleNext()" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                Proceed to Data Input
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+
+        function renderForm() {
+            // Check if stepsToDisplay has been populated
+            if (stepsToDisplay.length === 0) {
+                 // Should not happen if logic is correct, but as a safeguard
+                 return renderSelectionStep();
+            }
+
+            const step = stepsToDisplay[currentStep];
+            const progress = ((currentStep + 1) / stepsToDisplay.length) * 100;
+            const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
+            const suffix = inputType === 'annual' ? '' : ` (x${MONTHS_IN_YEAR} for Annual Output)`;
+            
+            // Logic to get the current value (annual value is stored in formData)
+            let currentValue;
+            if (formData[step.key] !== undefined) {
+                currentValue = inputType === 'monthly' ? (formData[step.key] / MONTHS_IN_YEAR) : formData[step.key];
+            } else {
+                currentValue = '';
+            }
+
+            return `
+                <div class="max-w-2xl mx-auto">
+                    <div class="bg-white rounded-2xl shadow-xl p-8">
+                        <div class="text-center mb-8">
+                            <h1 class="text-3xl font-bold text-gray-800 mb-2">
+                                Nigeria PIT Calculator
+                            </h1>
+                            <p class="text-gray-600">Personal Income Tax Estimation Tool</p>
+                        </div>
+                        
                         <div class="mb-8">
                             <div class="flex items-center justify-between mb-2">
                                 <span class="text-sm font-medium text-gray-600">
-                                    Step ${currentStep + 1} of ${steps.length}
+                                    Step ${currentStep + 1} of ${stepsToDisplay.length}
                                 </span>
                                 <span class="text-sm font-medium text-green-600">
                                     ${Math.round(progress)}%
@@ -1186,7 +1532,7 @@
                                     <input
                                         type="text"
                                         id="currentInput"
-                                        value="${formData[step.key] ? (inputType === 'monthly' ? (formData[step.key] / MONTHS_IN_YEAR) : formData[step.key]) : ''}"
+                                        value="${currentValue}"
                                         placeholder="${step.placeholder}"
                                         class="w-full pl-10 pr-4 py-4 text-lg border-2 border-gray-300 rounded-lg focus:border-green-500 focus:outline-none transition-colors"
                                         onkeypress="if(event.key === 'Enter') handleNext()"
@@ -1197,17 +1543,15 @@
                             </div>
 
                             <div class="flex gap-3">
-                                ${currentStep > 0 ? `
-                                    <button onclick="handleBack()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
-                                        </svg>
-                                        Back
-                                    </button>
-                                ` : ''}
+                                <button onclick="handleBack()" class="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path>
+                                    </svg>
+                                    Back
+                                </button>
                                 <button onclick="handleNext()" class="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                    ${currentStep === steps.length - 1 ? 'Calculate PAYE' : 'Next'}
-                                    ${currentStep < steps.length - 1 ? `
+                                    ${currentStep === stepsToDisplay.length - 1 ? 'Calculate PAYE' : 'Next'}
+                                    ${currentStep < stepsToDisplay.length - 1 ? `
                                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
@@ -1243,7 +1587,7 @@
                             </div>
                             <div class="bg-blue-50 border-l-4 border-blue-400 p-4 text-sm text-gray-700">
                                 <p class="font-semibold mb-2">1. Download Input Template:</p>
-                                <p class="mb-3">Use the template below to ensure your column headers are correct. If you select **Monthly Data Input** above, the system will multiply all financial columns by 12 before calculating the annual tax.</p>
+                                <p class="mb-3">Use the template below to ensure your column headers are correct. **NHIS Contribution** must be manually entered in the file (assumed to be the employee portion). If you select **Monthly Data Input** above, the system will multiply all financial columns by 12 before calculating the annual tax.</p>
                                 
                                 <button onclick="generateAndDownloadTemplate()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 px-4 rounded-lg transition-colors flex items-center justify-center gap-2">
                                     <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1284,15 +1628,20 @@
             let content = '';
 
             if (currentTab === 'individual') {
-                // PASS GLOBAL RESULT TO RENDER FUNCTION
-                content = result ? renderResult(result, false) : renderForm();
+                if (result) {
+                    content = renderResult(result, false);
+                } else if (currentStep === -1) {
+                    content = renderSelectionStep();
+                } else {
+                    content = renderForm();
+                }
             } else if (currentTab === 'bulk') {
                 content = bulkResult ? renderBulkResult() : renderBulkInput();
             }
 
             document.getElementById('app').innerHTML = renderTabs() + content;
 
-            if (currentTab === 'individual' && !result) {
+            if (currentTab === 'individual' && currentStep === 0) {
                 setTimeout(() => {
                     const input = document.getElementById('currentInput');
                     if (input) input.focus();
