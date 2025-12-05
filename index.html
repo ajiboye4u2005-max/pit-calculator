@@ -29,7 +29,7 @@
             transition: max-height 0.4s ease-in-out;
         }
         .accordion-content.expanded {
-            max-height: 1000px; /* Large enough value to show content */
+            max-height: 2000px; /* Increased from 1000px to ensure bulk details fit fully */
         }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
@@ -159,6 +159,7 @@
                 content.classList.remove('expanded');
                 icon.classList.remove('rotate-90');
             } else {
+                // In non-bulk view, collapse others when expanding one
                 if (!isBulkNested) {
                     document.querySelectorAll('.accordion-content.expanded').forEach(c => {
                         c.classList.remove('expanded');
@@ -204,7 +205,7 @@
         }
         
         function toggleAllInputs(checked) {
-            // Helper function to update inputSelection based on the checked flag. (Keep unchanged)
+            // Helper function to update inputSelection based on the checked flag.
             const options = [
                 ...SELECTION_OPTIONS.filter(opt => opt.group === 'allowances'),
                 ...SELECTION_OPTIONS.filter(opt => opt.group === 'reliefs')
@@ -221,7 +222,7 @@
             render();
         }
         
-        // List of selection options (unchanged from previous step)
+        // List of selection options
         const SELECTION_OPTIONS = [
              // Allowances
              { key: 'housingAllowance', label: 'Housing Allowance', group: 'allowances', hint: 'Part of the Pension base.' },
@@ -399,9 +400,7 @@
                     computedNhisEmployer = 0;
                  }
             } else {
-                 // BULK LOGIC: If the result of the employee contribution is 0 (either from file or 'auto' logic computed it to 0),
-                 // but here we rely on the logic above to set the employee contribution. The only way it's 0 is if it was manual 0 or auto 0.
-                 // For simplicity, we just check the employee contribution here.
+                 // BULK LOGIC: If the result of the employee contribution is 0, zero out employer's contribution
                  if (pensionEmployee === 0 && data.pensionEmployeeHeaderPresent && data.pensionEmployee === 0) {
                      computedPensionEmployer = 0;
                  }
@@ -454,9 +453,8 @@
             };
         }
 
-        // --- INDIVIDUAL CALCULATION LOGIC (Unchanged) ---
+        // --- INDIVIDUAL CALCULATION LOGIC ---
         function calculatePIT() {
-            // ... (unchanged)
             const employeeData = { 
                 ...formData, 
                 staffName: 'Individual Calculation', 
@@ -471,8 +469,38 @@
         }
         
         function proceedToInput() {
-            // ... (unchanged)
-            // ...
+            // Filter SELECTION_OPTIONS based on inputSelection to build the steps
+            stepsToDisplay = SELECTION_OPTIONS.filter(opt => {
+                if (opt.key === 'basicSalary') return true; // Basic Salary is always required (though not in the list yet)
+                if (opt.group === 'allowances' || opt.group === 'reliefs') {
+                    return inputSelection[opt.key] === true;
+                }
+                if (opt.group === 'deductions') {
+                    return inputSelection[opt.key] === 'manual';
+                }
+                return false;
+            }).map(opt => {
+                 // Map to the structure required for renderForm
+                 const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
+                 const isAllowance = opt.group === 'allowances';
+
+                 return {
+                    key: opt.key,
+                    label: opt.label,
+                    placeholder: `Enter ${timeUnit} ${opt.label}`,
+                    hint: isAllowance ? 'Cash amount received' : 'Annual cost or interest'
+                 };
+            });
+            
+            // Add Basic Salary as the first step (mandatory)
+            const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
+            stepsToDisplay.unshift({
+                key: 'basicSalary',
+                label: 'Basic Salary',
+                placeholder: `Enter ${timeUnit} Basic Salary`,
+                hint: 'The core salary component'
+            });
+
             // Move to the first step
             currentStep = 0;
             render();
@@ -488,18 +516,79 @@
         }
 
         function handleNext() {
-            // ... (unchanged)
-            // ...
+            // If it's the selection step (currentStep === -1), proceed to input
+            if (currentStep === -1) {
+                proceedToInput();
+                return;
+            }
+
+            // Get the current step's key
+            const step = stepsToDisplay[currentStep];
+            if (!step) return; 
+
+            // Get the value from the input field
+            const input = document.getElementById('currentInput');
+            let value = parseFloat(input.value.replace(/,/g, ''));
+
+            if (isNaN(value) || value < 0) {
+                alert(`Please enter a valid amount for ${step.label}.`);
+                return;
+            }
+
+            // Convert to Annual amount if input type is monthly
+            if (inputType === 'monthly') {
+                value *= MONTHS_IN_YEAR;
+            }
+            
+            // Store the value
+            formData[step.key] = value;
+
+            // Check if this is the last step
+            if (currentStep === stepsToDisplay.length - 1) {
+                // Last step, calculate
+                calculatePIT(); 
+                return;
+            }
+
+            // Move to the next step
+            currentStep++;
+            render();
+            setTimeout(() => {
+                const nextInput = document.getElementById('currentInput');
+                if (nextInput) nextInput.focus();
+            }, 100);
         }
 
         function handleBack() {
-            // ... (unchanged)
-            // ...
+            if (currentStep > 0) {
+                currentStep--;
+                render();
+            } else if (currentStep === 0) {
+                // If on the first input step, go back to selection
+                currentStep = -1;
+                render();
+            } else if (currentStep === -1) {
+                // If on selection screen, do nothing or handle back to tab selection if needed, but here we stay
+            }
         }
 
         function resetCalculator() {
-            // ... (unchanged)
-            // ...
+            currentStep = -1; 
+            formData = {};
+            stepsToDisplay = [];
+            result = null;
+            // Reset inputSelection to default
+            inputSelection = {
+                housingAllowance: true,
+                transportAllowance: true,
+                otherAllowances: true,
+                nhf: 'auto',
+                nhis: 'auto',
+                pensionEmployee: 'auto',
+                loanInterest: true,
+                lifeInsurance: true,
+                annualRent: true,
+            };
             render();
         }
 
@@ -612,7 +701,6 @@
         }
         
         function downloadBulkResult() {
-            // ... (unchanged, uses standard OUTPUT_HEADERS)
             if (!bulkResult || bulkResult.length === 0) {
                 alert("No calculation results to download.");
                 return;
@@ -718,7 +806,6 @@
         // --- RENDER FUNCTIONS (Web UI) ---
 
         function renderTabs() {
-            // ... (unchanged)
             return `
                 <div class="max-w-3xl mx-auto mb-6">
                     <div class="flex border-b border-gray-300">
@@ -736,7 +823,6 @@
         }
         
         function renderAnnualMonthlyRow(label, annualAmount, monthlyAmount, isBold = false) {
-            // ... (unchanged)
             const fontClass = isBold ? 'font-semibold text-base text-gray-800' : 'text-sm text-gray-700';
             return `
                 <div class="flex items-center py-2 border-b border-gray-100 last:border-b-0">
@@ -908,70 +994,79 @@
                     <span class="text-indigo-700">${formatPercentage(R.effectiveTaxRate)}</span>
                 </div>
             `;
-
-
-            return `
-                <div class="max-w-3xl mx-auto">
-                    <div class="bg-white rounded-2xl shadow-xl p-8">
-                        <div class="text-center mb-6">
-                            <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Breakdown</h2>
-                            <p class="text-gray-600">Employee: ${R.staffName || 'Individual'}</p>
-                            <div class="mt-4 flex justify-between bg-gray-100 p-3 rounded-lg text-sm font-semibold text-gray-600">
-                                <span class="w-1/2">Details</span>
-                                <span class="w-1/4 text-right">Annual Figures</span>
-                                <span class="w-1/4 text-right">Monthly Figures</span>
-                            </div>
+            
+            // The main content body
+            const contentBody = `
+                <div class="bg-white rounded-2xl shadow-xl p-8">
+                    <div class="text-center mb-6">
+                        <h2 class="text-3xl font-bold text-gray-800">PIT Calculation Breakdown</h2>
+                        <p class="text-gray-600">Employee: ${R.staffName || 'Individual'}</p>
+                        <div class="mt-4 flex justify-between bg-gray-100 p-3 rounded-lg text-sm font-semibold text-gray-600">
+                            <span class="w-1/2">Details</span>
+                            <span class="w-1/4 text-right">Annual Figures</span>
+                            <span class="w-1/4 text-right">Monthly Figures</span>
                         </div>
+                    </div>
 
-                        <div class="space-y-4">
-                            
-                            ${renderAccordionItem('gross', '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
+                    <div class="space-y-4">
+                        
+                        ${renderAccordionItem('gross', '1. Gross Annual Income', R.grossIncome, 'blue', grossBreakdown)}
 
-                            ${renderAccordionItem('statutory', '2. Statutory Cash Deductions (Employee - For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
-                            
-                            ${renderAccordionItem('reliefs', '3. Total Tax Reliefs (For Taxable Income)', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
+                        ${renderAccordionItem('statutory', '2. Statutory Cash Deductions (Employee - For Net Salary)', R.trueCashDeductions, 'gray', statutoryDeductionsBreakdown)}
+                        
+                        ${renderAccordionItem('reliefs', '3. Total Tax Reliefs (For Taxable Income)', R.totalTaxReliefs, 'orange', reliefsBreakdown)}
 
-                            ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
-                            
-                            ${renderAccordionItem('netsalary', '5. NET SALARY (Worker\'s Monthly Take Home)', R.annualNetSalary, 'green', netSalaryBreakdown)}
-                            
-                            ${renderAccordionItem('employer', '6. Employer Statutory Contributions (Cost to Company)', R.computedPensionEmployer + R.computedNhisEmployer, 'indigo', employerContributionBreakdown)}
+                        ${renderAccordionItem('paye', '4. Total Annual PAYE', R.annualPAYE, 'red', payeBreakdown)}
+                        
+                        ${renderAccordionItem('netsalary', '5. NET SALARY (Worker\'s Monthly Take Home)', R.annualNetSalary, 'green', netSalaryBreakdown)}
+                        
+                        ${renderAccordionItem('employer', '6. Employer Statutory Contributions (Cost to Company)', R.computedPensionEmployer + R.computedNhisEmployer, 'indigo', employerContributionBreakdown)}
 
-                            ${renderAccordionItem('remittance', '7. TOTAL STATUTORY REMITTANCE (PAYE + NHF + NHIS + Pension)', grandTotalRemittance, 'yellow', totalRemittanceBreakdown)}
-                            
-                            ${effectiveTaxRateBox}
+                        ${renderAccordionItem('remittance', '7. TOTAL STATUTORY REMITTANCE (PAYE + NHF + NHIS + Pension)', grandTotalRemittance, 'yellow', totalRemittanceBreakdown)}
+                        
+                        ${effectiveTaxRateBox}
 
-                            ${!isBulkView ? `
-                                <div class="pt-4">
-                                    <div class="bg-gray-100 rounded-lg border-l-4 border-gray-400 p-4 text-sm text-gray-700">
-                                        <p class="font-semibold mb-3 text-center">Contact for Professional Consultation:</p>
-                                        <div class="flex space-x-6 justify-center">
-                                            <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">WhatsApp</a>
-                                            <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">Email</a>
-                                        </div>
-                                    </div>
-                                    <div class="bg-red-50 border-l-4 border-red-400 p-4 text-sm text-gray-700 mt-4">
-                                        <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
-                                        <p class="mb-1">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
+                        ${!isBulkView ? `
+                            <div class="pt-4">
+                                <div class="bg-gray-100 rounded-lg border-l-4 border-gray-400 p-4 text-sm text-gray-700">
+                                    <p class="font-semibold mb-3 text-center">Contact for Professional Consultation:</p>
+                                    <div class="flex space-x-6 justify-center">
+                                        <a href="https://wa.me/2348068866727" target="_blank" class="flex items-center text-green-600 hover:text-green-700 font-medium transition-colors">WhatsApp</a>
+                                        <a href="mailto:ajiboye4u2005@gmail.com" class="flex items-center text-red-600 hover:text-red-700 font-medium transition-colors">Email</a>
                                     </div>
                                 </div>
+                                <div class="bg-red-50 border-l-4 border-red-400 p-4 text-sm text-gray-700 mt-4">
+                                    <p class="font-semibold mb-2">⚠️ IMPORTANT DISCLAIMER</p>
+                                    <p class="mb-1">This calculation is for estimation purposes only. Please consult a certified tax professional for official advice.</p>
+                                </div>
+                            </div>
 
 
-                                <button onclick="resetCalculator();" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
-                                    </svg>
-                                    Start New Calculation
-                                </button>
-                            ` : ''}
-                        </div>
+                            <button onclick="resetCalculator();" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+                                </svg>
+                                Start New Calculation
+                            </button>
+                        ` : ''}
                     </div>
                 </div>
             `;
+            
+            // Apply width constraint only if it's the individual view
+            if (!isBulkView) {
+                return `
+                    <div class="max-w-3xl mx-auto">
+                        ${contentBody}
+                    </div>
+                `;
+            } else {
+                // For bulk view, return just the content body
+                return contentBody;
+            }
         }
         
         function renderSelectionStep() {
-            // ... (unchanged)
             const allOptionalSelected = SELECTION_OPTIONS
                 .filter(opt => opt.key !== 'basicSalary') 
                 .every(opt => opt.group === 'deductions' ? opt.selected === 'manual' || inputSelection[opt.key] === 'manual' : inputSelection[opt.key] === true);
@@ -1089,8 +1184,6 @@
         }
 
         function renderForm() {
-            // ... (unchanged)
-            // ...
             const step = stepsToDisplay[currentStep];
             const progress = ((currentStep + 1) / stepsToDisplay.length) * 100;
             const timeUnit = inputType === 'annual' ? 'Annual' : 'Monthly';
@@ -1098,6 +1191,7 @@
             
             let currentValue;
             if (formData[step.key] !== undefined) {
+                // If the value exists in formData (annual), convert it back to monthly for display if needed
                 currentValue = inputType === 'monthly' ? (formData[step.key] / MONTHS_IN_YEAR) : formData[step.key];
             } else {
                 currentValue = '';
